@@ -122,6 +122,41 @@ You must follow the JSON schema exactly and generate every field. Return ONLY va
 ## Year Group Content Guidance
 """ + YEAR_GROUP_GUIDANCE + """
 
+## CRITICAL: Magic-e (split digraph) + suffix rules
+
+When the user-provided word list contains words built from a magic-e base word with -ed, -ing, -er or -est added, you MUST apply the correct spelling rules. Many earlier outputs have produced wrong forms like "bakeing", "driveing", "makeing", "smileing". These are spelling errors and must never appear in any field of the output (words, starter.answers, sentences, defs, spellData.opts, clozeOrder, wordShed, morphMatrix, etymology, syllableBreaks).
+
+The rules:
+
+1. Magic-e base + ING → DROP the e, then add ing.
+   - bake + ing → baking (NOT "bakeing")
+   - drive + ing → driving (NOT "driveing")
+   - make + ing → making (NOT "makeing")
+   - smile + ing → smiling (NOT "smileing")
+   - shine + ing → shining (NOT "shineing")
+   - race + ing → racing (NOT "raceing")
+   - hope + ing → hoping (NOT "hopeing")
+   - write + ing → writing (NOT "writeing")
+   - skate + ing → skating (NOT "skateing")
+   - hike + ing → hiking (NOT "hikeing")
+
+2. Magic-e base + ED → DROP the e, then add ed (the final spelling ends in -ed not -eed).
+   - bake + ed → baked (NOT "bakeed")
+   - hope + ed → hoped (NOT "hopeed")
+   - move + ed → moved (NOT "moveed")
+   - skate + ed → skated (NOT "skateed")
+   - race + ed → raced (NOT "raceed")
+
+3. Magic-e base + ER / EST → DROP the e, then add er/est.
+   - large + er → larger (NOT "largeer")
+   - nice + est → nicest (NOT "niceest")
+
+4. The starter.answers field MUST contain the correctly-spelt forms. If the starter shows base words like "bake", "drive", "smile" with "+ing" or "+ed", the answers must be "baking", "driving", "smiling" — never the wrong forms.
+
+5. The spellData distractor "opts" can include the wrong form (e.g. "bakeing") AS A DELIBERATE WRONG OPTION, but the correct entry (correct=N) must point to the right form.
+
+Validate every word in your output against these rules before returning. Reject any word that has "magic-e base + ing/ed/er/est" with the e still present (e.g. anything ending in "eing", "eed" except past-tense regular -ed verbs that don't have a magic e in their base, "eer", "eest").
+
 ## Critical rules
 - Return ONLY valid JSON. No markdown, no explanation.
 - Generate every field completely — no placeholders, no nulls.
@@ -135,6 +170,7 @@ You must follow the JSON schema exactly and generate every field. Return ONLY va
 - etymology.clicks must have exactly 6 entries.
 - morphMatrix.suffixes and morphMatrix.answers must each have exactly 6 entries.
 - spellData must have exactly one row per word in words[] order.
+- Magic-e + suffix rules above must be applied to every word, anywhere in the output.
 """
 
 def _user_prompt(rule, words, year_group, rule_origin):
@@ -158,15 +194,22 @@ Words ({len(words)}): {", ".join(words)}{cross_year_note}
 
 Pitch ALL generated content (definitions, sentences, morphology, word sort categories, etymology depth, cloze complexity) according to the {year_group} content guidance.
 
+If any of the words above are derived from magic-e base words plus a suffix (-ed, -ing, -er, -est), make sure every reference to those words across the entire output uses the correct dropped-e spelling. Never write "bakeing", "driveing", "makeing", "smileing" or any similar form.
+
 Return only the JSON object."""
 
 
 # ── Generator ─────────────────────────────────────────────────────────────────
 
-def generate_lesson_json(rule: str, words: list, year_group: str, rule_origin: str) -> dict:
+def generate_lesson_json(rule: str, words: list, year_group: str, rule_origin: str,
+                         key_spelling_word: str = None) -> dict:
     """
     Call the Anthropic API and return a validated lesson dict.
     Raises ValueError if the response cannot be parsed or fails basic validation.
+
+    key_spelling_word is an optional class key-spelling word that gets attached
+    to the returned lesson as keySpellingWord. The slides builder uses this to
+    add the Quick Write Key Spelling Practice slide.
     """
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
@@ -197,7 +240,46 @@ def generate_lesson_json(rule: str, words: list, year_group: str, rule_origin: s
     # Basic validation
     _validate(lesson, words)
 
+    # Attach key spelling word for the slides builder
+    if key_spelling_word:
+        lesson["keySpellingWord"] = key_spelling_word
+
     return lesson
+
+
+# Words ending in these patterns are almost always misspelt magic-e + suffix
+# forms. We check the user-supplied words list (not distractors in spellData,
+# which are deliberately wrong) and any place the AI generates new word forms.
+_MAGIC_E_SUFFIX_BAD_PATTERNS = re.compile(
+    r"(?<!^)(eing|eed|eer|eest)$",  # cake + ing → "cakeing" etc.
+    re.IGNORECASE,
+)
+
+# A small allow-list of legitimate -eer / -eed / -eing endings that aren't
+# magic-e + suffix mistakes. Add words here if false positives appear.
+_MAGIC_E_SUFFIX_ALLOW = {
+    # -eed: real /iː/ + d words
+    "agreed", "freed", "treed", "decreed", "guaranteed", "indeed", "kneed",
+    "speed", "feed", "need", "seed", "weed", "breed", "creed", "deed", "freed",
+    "greed", "reed", "steed", "tweed", "exceed", "succeed", "proceed",
+    # -eer: /ɪər/ words
+    "deer", "beer", "cheer", "jeer", "leer", "peer", "queer", "seer", "veer",
+    "career", "engineer", "pioneer", "volunteer", "auctioneer", "puppeteer",
+    "racketeer", "mountaineer", "musketeer", "profiteer", "sneer", "steer",
+    # -eing: legitimate words where the e stays
+    "being", "freeing", "seeing", "agreeing", "fleeing", "guaranteeing",
+    "decreeing", "skiing",  # not -eing but skiing has unusual -iing
+    # -eest: rare but possible
+    "freest",
+}
+
+
+def _looks_like_magic_e_suffix_error(word: str) -> bool:
+    """Return True if word looks like a missed magic-e drop (e.g. 'bakeing')."""
+    w = word.lower().strip()
+    if w in _MAGIC_E_SUFFIX_ALLOW:
+        return False
+    return bool(_MAGIC_E_SUFFIX_BAD_PATTERNS.search(w))
 
 
 def _validate(lesson: dict, words: list):
@@ -216,6 +298,46 @@ def _validate(lesson: dict, words: list):
     if sorted(lesson["words"]) != sorted(words):
         # Allow minor mismatch — just warn in production; here we patch silently
         lesson["words"] = words
+
+    # Magic-e + suffix check — applies to fields that should contain CORRECT
+    # spellings. spellData distractor opts are deliberately wrong so excluded.
+    bad_words = []
+    # Main word list
+    for w in lesson.get("words", []):
+        if _looks_like_magic_e_suffix_error(w):
+            bad_words.append(("words", w))
+    # Starter answers
+    for w in lesson.get("starter", {}).get("answers", []):
+        if _looks_like_magic_e_suffix_error(w):
+            bad_words.append(("starter.answers", w))
+    # spellData correct option only (not distractors)
+    for i, row in enumerate(lesson.get("spellData", [])):
+        opts = row.get("opts", [])
+        correct_idx = row.get("correct", 0)
+        if 0 <= correct_idx < len(opts):
+            w = opts[correct_idx]
+            if _looks_like_magic_e_suffix_error(w):
+                bad_words.append((f"spellData[{i}].correct", w))
+    # clozeOrder
+    for w in lesson.get("clozeOrder", []):
+        if _looks_like_magic_e_suffix_error(w):
+            bad_words.append(("clozeOrder", w))
+    # wordShed
+    ws_morph = lesson.get("wordShed", {}).get("morphology", "")
+    for w in re.split(r"[,\s]+", ws_morph):
+        if w and _looks_like_magic_e_suffix_error(w):
+            bad_words.append(("wordShed.morphology", w))
+    # morphMatrix.answers
+    for w in lesson.get("morphMatrix", {}).get("answers", []):
+        if _looks_like_magic_e_suffix_error(w):
+            bad_words.append(("morphMatrix.answers", w))
+
+    if bad_words:
+        details = ", ".join(f"{loc}={w!r}" for loc, w in bad_words)
+        raise ValueError(
+            f"Magic-e suffix errors detected (e dropped wrong): {details}. "
+            f"Regenerate the lesson."
+        )
 
     # spell data count
     if len(lesson.get("spellData", [])) != len(words):
@@ -276,6 +398,7 @@ Requirements:
 - Words must be appropriate in difficulty for {year_group} pupils aged {age}
 - Words should be varied — different lengths, different contexts
 - All words must be real, common English words pupils will encounter in reading
+- All words must be CORRECTLY spelt — apply standard spelling rules. For example, when adding -ing or -ed to a magic-e base word, drop the e (bake + ing = baking, not "bakeing"; drive + ed = drove or driven for past tense, not "driveing").
 - Return ONLY a JSON array of {n} lowercase strings, nothing else
 - Example format: ["word1", "word2", "word3"]"""
 

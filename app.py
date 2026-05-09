@@ -74,7 +74,7 @@ word_list_raw = st.text_area(
 key_spelling = st.text_input(
     "Key spelling word (optional)",
     placeholder="e.g. because",
-    help="A word from your class key spelling list. Leave blank if not needed."
+    help="A word from your class key spelling list. Used on the Quick Write slide. Leave blank to skip that slide."
 )
 
 # ── Generate ──────────────────────────────────────────────────────────────────
@@ -104,6 +104,7 @@ if st.button("Generate lesson", type="primary", use_container_width=True):
                 words=words,
                 year_group=year_group,
                 rule_origin=rule_origin,
+                key_spelling_word=key_spelling.strip() or None,
             )
         except Exception as ex:
             status.update(label="Content generation failed.", state="error")
@@ -181,6 +182,8 @@ if st.button("Generate lesson", type="primary", use_container_width=True):
         st.write(f"**Rule:** {lesson.get('rule')}")
         st.write(f"**Code:** {lesson.get('code')}")
         st.write(f"**Words:** {', '.join(lesson.get('words', []))}")
+        if lesson.get("keySpellingWord"):
+            st.write(f"**Key spelling word:** {lesson.get('keySpellingWord')}")
         st.write("**Definitions:**")
         for w, d in lesson.get("defs", {}).items():
             st.write(f"- *{w}*: {d}")
