@@ -22,8 +22,8 @@ st.caption("Wallscourt Farm Academy — EdShed-style lesson resources")
 
 # ── Persistent state ──────────────────────────────────────────────────────────
 
-if "word_list" not in st.session_state:
-    st.session_state["word_list"] = ""
+if "word_list_input" not in st.session_state:
+    st.session_state["word_list_input"] = ""
 
 # ── Year group and rule ───────────────────────────────────────────────────────
 
@@ -57,7 +57,7 @@ if st.button("Suggest words"):
         with st.spinner("Suggesting words…"):
             try:
                 suggested = suggest_words(spelling_rule.strip(), year_group)
-                st.session_state["word_list"] = "\n".join(suggested)
+                st.session_state["word_list_input"] = "\n".join(suggested)
             except Exception as ex:
                 st.error(f"Word suggestion failed: {ex}")
 
@@ -65,7 +65,6 @@ if st.button("Suggest words"):
 
 word_list_raw = st.text_area(
     "Word list (one per line, 8–10 words)",
-    value=st.session_state["word_list"],
     height=200,
     help="Edit the suggested words or type your own.",
     key="word_list_input"
