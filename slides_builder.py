@@ -6,6 +6,9 @@ Returns raw PPTX bytes.
 """
 
 import io
+import os
+import zipfile
+import shutil
 from pptx import Presentation
 from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
@@ -360,6 +363,55 @@ def build_slides(lesson: dict) -> bytes:
             size=18, bold=True, color=C["BLACK"], align="center")
         txt(s, "This week's words:  " + ", ".join(WORDS),
             0.5, 4.35, 9.0, 0.55, size=17, color=C["BLACK"], align="center")
+
+    # ════════════════════════════════════════════════════════════════════════
+    # SLIDE — Key Spelling Practice (Quick Write word)
+    # Inserted at position 2 (after title) when keySpellingWord is provided.
+    # The timer MP4 is post-processed into the saved zip; here we just place
+    # the static thumbnail image as the picture.
+    # ════════════════════════════════════════════════════════════════════════
+
+    # Track which slide gets the video upgrade so the post-processor can find it.
+    key_spelling_slide_index = [None]
+    key_spelling_pic_id = [None]
+
+    def slide_key_spelling():
+        if not lesson.get("keySpellingWord"):
+            return
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Whole Group", "Key Spelling Practice",
+                  "Quick Write word", "KSp")
+
+        # Yellow "Today's word is..." banner
+        rect(s, 0.58, 1.42, 8.23, 0.45, "FFF9C4", C["YELLOW"], 1.5)
+        txt(s, "Today's word is…", 0.58, 1.42, 8.23, 0.45,
+            size=16, bold=True, color=C["BLACK"], align="center", margin=0)
+
+        # Big focus word
+        word = str(lesson["keySpellingWord"])
+        # Scale font down if word is unusually long so it fits
+        word_fs = 66
+        if len(word) > 9:
+            word_fs = max(40, int(66 * 9 / len(word)))
+        txt(s, word, 1.0, 2.34, 8.0, 1.21,
+            size=word_fs, color=C["BLACK"], align="center", valign="middle", margin=0)
+
+        # Question prompt
+        txt(s, "How many times can you write the word in 1 minute?",
+            2.0, 4.27, 6.0, 0.40,
+            size=14, color=C["BLACK"], align="center", margin=0)
+
+        # Timer thumbnail (will be upgraded to video in post-processing)
+        timer_img = os.path.join(os.path.dirname(__file__), "assets", "timer_1min_thumb.png")
+        if os.path.exists(timer_img):
+            pic = s.shapes.add_picture(
+                timer_img,
+                Inches(4.38), Inches(4.83),
+                Inches(1.40), Inches(0.42)
+            )
+            # Remember this slide and pic so post-processing can swap in the video.
+            key_spelling_slide_index[0] = len(prs.slides) - 1
+            key_spelling_pic_id[0] = pic.shape_id
 
     # ════════════════════════════════════════════════════════════════════════
     # SLIDE 2 — Starter (blank)
@@ -1237,7 +1289,7 @@ def build_slides(lesson: dict) -> bytes:
 
     # ── Build all slides ──────────────────────────────────────────────────────
 
-    slide1();  slide2();  slide3();  slide4();  slide5();  slide6();  slide7()
+    slide1();  slide_key_spelling();  slide2();  slide3();  slide4();  slide5();  slide6();  slide7()
     slide8();  slide9();  slide10(); slide11(); slide12(); slide13(); slide14()
     slide15(); slide16(); slide17(); slide18(); slide19(); slide20(); slide21()
 
@@ -1247,4 +1299,333 @@ def build_slides(lesson: dict) -> bytes:
     buf = io.BytesIO()
     prs.save(buf)
     buf.seek(0)
-    return buf.read()
+    pptx_bytes = buf.read()
+
+    # Post-process: if a Key Spelling slide was added, upgrade its timer
+    # thumbnail picture into an embedded video with click-to-play.
+    if key_spelling_slide_index[0] is not None and key_spelling_pic_id[0] is not None:
+        pptx_bytes = _embed_timer_video(
+            pptx_bytes,
+            slide_index_zero_based=key_spelling_slide_index[0],
+            pic_shape_id=key_spelling_pic_id[0],
+        )
+
+    return pptx_bytes
+
+
+def _embed_timer_video(pptx_bytes: bytes, slide_index_zero_based: int,
+                      pic_shape_id: int) -> bytes:
+    """Inject the 1-minute timer MP4 into a generated PPTX.
+
+    Modifies the saved zip to:
+      * add ppt/media/timer_1min.mp4 as a media part
+      * register the mp4 extension in [Content_Types].xml
+      * add video + media relationships to the target slide
+      * upgrade the existing pic element on the slide to reference the video
+      * insert a p:timing block that plays the video on click and registers
+        an interactive sequence so clicking the video toggles pause/resume.
+    Slide and shape IDs are passed in by the caller.
+    """
+    import zipfile, io, os
+    from lxml import etree
+
+    P = "http://schemas.openxmlformats.org/presentationml/2006/main"
+    A = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    P14 = "http://schemas.microsoft.com/office/powerpoint/2010/main"
+    REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+    CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
+
+    mp4_path = os.path.join(os.path.dirname(__file__), "assets", "timer_1min.mp4")
+    if not os.path.exists(mp4_path):
+        return pptx_bytes  # gracefully degrade if asset missing
+    with open(mp4_path, "rb") as f:
+        mp4_bytes = f.read()
+
+    # python-pptx slides are saved as slide{N}.xml where N is 1-based and follows
+    # presentation.xml's sldIdLst ordering. We received zero-based index from caller.
+    slide_one_based = slide_index_zero_based + 1
+    slide_xml_path = f"ppt/slides/slide{slide_one_based}.xml"
+    slide_rels_path = f"ppt/slides/_rels/slide{slide_one_based}.xml.rels"
+
+    # Read existing zip into memory
+    src_zip = zipfile.ZipFile(io.BytesIO(pptx_bytes), "r")
+    namelist = src_zip.namelist()
+
+    # ── 1. Update Content Types: ensure mp4 default exists ───────────────────
+    ct_xml = src_zip.read("[Content_Types].xml")
+    ct_tree = etree.fromstring(ct_xml)
+    has_mp4 = False
+    for default in ct_tree.findall(f"{{{CT_NS}}}Default"):
+        if default.get("Extension") == "mp4":
+            has_mp4 = True
+            break
+    if not has_mp4:
+        new_default = etree.SubElement(ct_tree, f"{{{CT_NS}}}Default")
+        new_default.set("Extension", "mp4")
+        new_default.set("ContentType", "video/mp4")
+    new_ct_xml = etree.tostring(ct_tree, xml_declaration=True,
+                                encoding="UTF-8", standalone=True)
+
+    # ── 2. Update slide relationships: add video + media + (image already there) ─
+    rels_xml = src_zip.read(slide_rels_path)
+    rels_tree = etree.fromstring(rels_xml)
+    existing_ids = set()
+    for r in rels_tree.findall(f"{{{REL_NS}}}Relationship"):
+        existing_ids.add(r.get("Id"))
+
+    def next_rid():
+        i = 1
+        while f"rId{i}" in existing_ids:
+            i += 1
+        existing_ids.add(f"rId{i}")
+        return f"rId{i}"
+
+    media_rid = next_rid()  # for p14:media
+    video_rid = next_rid()  # for video
+
+    media_rel = etree.SubElement(rels_tree, f"{{{REL_NS}}}Relationship")
+    media_rel.set("Id", media_rid)
+    media_rel.set("Type", "http://schemas.microsoft.com/office/2007/relationships/media")
+    media_rel.set("Target", "../media/timer_1min.mp4")
+
+    video_rel = etree.SubElement(rels_tree, f"{{{REL_NS}}}Relationship")
+    video_rel.set("Id", video_rid)
+    video_rel.set("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/video")
+    video_rel.set("Target", "../media/timer_1min.mp4")
+
+    new_rels_xml = etree.tostring(rels_tree, xml_declaration=True,
+                                  encoding="UTF-8", standalone=True)
+
+    # ── 3. Modify slide XML: upgrade pic and add timing ──────────────────────
+    slide_xml = src_zip.read(slide_xml_path)
+    slide_tree = etree.fromstring(slide_xml)
+
+    nsmap = {"p": P, "a": A, "r": R, "p14": P14}
+
+    # Find the pic with our shape id
+    pic = None
+    for p in slide_tree.iter(f"{{{P}}}pic"):
+        cNvPr = p.find(f".//{{{P}}}cNvPr")
+        if cNvPr is not None and cNvPr.get("id") == str(pic_shape_id):
+            pic = p
+            break
+    if pic is None:
+        # Couldn't find pic; return original
+        src_zip.close()
+        return pptx_bytes
+
+    # Upgrade the pic's nvPicPr block:
+    #   * add hlinkClick action="ppaction://media" on cNvPr
+    #   * insert a:videoFile r:link=videoRid into nvPr
+    #   * insert p:extLst with p14:media r:embed=mediaRid into nvPr
+    cNvPr = pic.find(f".//{{{P}}}cNvPr")
+    if cNvPr is not None:
+        # Add hlinkClick if not present
+        if cNvPr.find(f"{{{A}}}hlinkClick") is None:
+            hl = etree.SubElement(cNvPr, f"{{{A}}}hlinkClick")
+            hl.set(f"{{{R}}}id", "")
+            hl.set("action", "ppaction://media")
+            # hlinkClick should come before extLst per schema; reorder if needed
+            ext = cNvPr.find(f"{{{A}}}extLst")
+            if ext is not None:
+                cNvPr.remove(hl)
+                cNvPr.insert(list(cNvPr).index(ext), hl)
+
+    nvPr = pic.find(f".//{{{P}}}nvPr")
+    if nvPr is not None:
+        # videoFile element
+        videoFile = etree.SubElement(nvPr, f"{{{A}}}videoFile")
+        videoFile.set(f"{{{R}}}link", video_rid)
+        # extLst with p14:media
+        ext_list = etree.SubElement(nvPr, f"{{{P}}}extLst")
+        ext = etree.SubElement(ext_list, f"{{{P}}}ext")
+        ext.set("uri", "{DAA4B4D4-6D71-4841-9C94-3DE7FCFB9230}")
+        media = etree.SubElement(ext, f"{{{P14}}}media")
+        media.set(f"{{{R}}}embed", media_rid)
+
+    # Add or replace timing tree on this slide. The Key Spelling slide has no
+    # other animations, so we replace any existing timing wholesale.
+    cSld = slide_tree.find(f"{{{P}}}cSld")
+    # Strip existing timing/bldLst
+    for tag in ("timing", "bldLst"):
+        existing = slide_tree.find(f"{{{P}}}{tag}")
+        if existing is not None:
+            slide_tree.remove(existing)
+
+    timing = etree.SubElement(slide_tree, f"{{{P}}}timing")
+    tnLst = etree.SubElement(timing, f"{{{P}}}tnLst")
+    root_par = etree.SubElement(tnLst, f"{{{P}}}par")
+    root_cTn = etree.SubElement(root_par, f"{{{P}}}cTn")
+    root_cTn.set("id", "1")
+    root_cTn.set("dur", "indefinite")
+    root_cTn.set("restart", "never")
+    root_cTn.set("nodeType", "tmRoot")
+    root_children = etree.SubElement(root_cTn, f"{{{P}}}childTnLst")
+
+    # Main click sequence with playFrom command
+    seq = etree.SubElement(root_children, f"{{{P}}}seq")
+    seq.set("concurrent", "1")
+    seq.set("nextAc", "seek")
+    seq_cTn = etree.SubElement(seq, f"{{{P}}}cTn")
+    seq_cTn.set("id", "2")
+    seq_cTn.set("dur", "indefinite")
+    seq_cTn.set("nodeType", "mainSeq")
+    seq_children = etree.SubElement(seq_cTn, f"{{{P}}}childTnLst")
+
+    click_par = etree.SubElement(seq_children, f"{{{P}}}par")
+    click_cTn = etree.SubElement(click_par, f"{{{P}}}cTn")
+    click_cTn.set("id", "3")
+    click_cTn.set("fill", "hold")
+    cl_stCondLst = etree.SubElement(click_cTn, f"{{{P}}}stCondLst")
+    etree.SubElement(cl_stCondLst, f"{{{P}}}cond").set("delay", "indefinite")
+    cl_children = etree.SubElement(click_cTn, f"{{{P}}}childTnLst")
+
+    inner_par = etree.SubElement(cl_children, f"{{{P}}}par")
+    inner_cTn = etree.SubElement(inner_par, f"{{{P}}}cTn")
+    inner_cTn.set("id", "4")
+    inner_cTn.set("fill", "hold")
+    in_stCondLst = etree.SubElement(inner_cTn, f"{{{P}}}stCondLst")
+    etree.SubElement(in_stCondLst, f"{{{P}}}cond").set("delay", "0")
+    in_children = etree.SubElement(inner_cTn, f"{{{P}}}childTnLst")
+
+    play_par = etree.SubElement(in_children, f"{{{P}}}par")
+    play_cTn = etree.SubElement(play_par, f"{{{P}}}cTn")
+    play_cTn.set("id", "5")
+    play_cTn.set("presetID", "1")
+    play_cTn.set("presetClass", "mediacall")
+    play_cTn.set("presetSubtype", "0")
+    play_cTn.set("fill", "hold")
+    play_cTn.set("nodeType", "clickEffect")
+    play_stCondLst = etree.SubElement(play_cTn, f"{{{P}}}stCondLst")
+    etree.SubElement(play_stCondLst, f"{{{P}}}cond").set("delay", "0")
+    play_children = etree.SubElement(play_cTn, f"{{{P}}}childTnLst")
+
+    cmd = etree.SubElement(play_children, f"{{{P}}}cmd")
+    cmd.set("type", "call")
+    cmd.set("cmd", "playFrom(0.0)")
+    cBhvr = etree.SubElement(cmd, f"{{{P}}}cBhvr")
+    cBhvr_cTn = etree.SubElement(cBhvr, f"{{{P}}}cTn")
+    cBhvr_cTn.set("id", "6")
+    cBhvr_cTn.set("dur", "63000")  # ~63s timeline
+    cBhvr_cTn.set("fill", "hold")
+    tgtEl = etree.SubElement(cBhvr, f"{{{P}}}tgtEl")
+    spTgt = etree.SubElement(tgtEl, f"{{{P}}}spTgt")
+    spTgt.set("spid", str(pic_shape_id))
+
+    # prevCondLst / nextCondLst on the seq for slide-level navigation
+    prev = etree.SubElement(seq, f"{{{P}}}prevCondLst")
+    pc = etree.SubElement(prev, f"{{{P}}}cond")
+    pc.set("evt", "onPrev"); pc.set("delay", "0")
+    pc_tgt = etree.SubElement(pc, f"{{{P}}}tgtEl")
+    etree.SubElement(pc_tgt, f"{{{P}}}sldTgt")
+    nxt = etree.SubElement(seq, f"{{{P}}}nextCondLst")
+    nc = etree.SubElement(nxt, f"{{{P}}}cond")
+    nc.set("evt", "onNext"); nc.set("delay", "0")
+    nc_tgt = etree.SubElement(nc, f"{{{P}}}tgtEl")
+    etree.SubElement(nc_tgt, f"{{{P}}}sldTgt")
+
+    # p:video media node so PPT recognises this as a video player
+    video_node = etree.SubElement(root_children, f"{{{P}}}video")
+    cMediaNode = etree.SubElement(video_node, f"{{{P}}}cMediaNode")
+    cMediaNode.set("vol", "80000")
+    media_cTn = etree.SubElement(cMediaNode, f"{{{P}}}cTn")
+    media_cTn.set("id", "7")
+    media_cTn.set("fill", "hold")
+    media_cTn.set("display", "0")
+    m_stCondLst = etree.SubElement(media_cTn, f"{{{P}}}stCondLst")
+    etree.SubElement(m_stCondLst, f"{{{P}}}cond").set("delay", "indefinite")
+    m_tgtEl = etree.SubElement(cMediaNode, f"{{{P}}}tgtEl")
+    m_spTgt = etree.SubElement(m_tgtEl, f"{{{P}}}spTgt")
+    m_spTgt.set("spid", str(pic_shape_id))
+
+    # interactiveSeq — clicking the video toggles pause
+    iseq = etree.SubElement(root_children, f"{{{P}}}seq")
+    iseq.set("concurrent", "1")
+    iseq.set("nextAc", "seek")
+    iseq_cTn = etree.SubElement(iseq, f"{{{P}}}cTn")
+    iseq_cTn.set("id", "8")
+    iseq_cTn.set("restart", "whenNotActive")
+    iseq_cTn.set("fill", "hold")
+    iseq_cTn.set("evtFilter", "cancelBubble")
+    iseq_cTn.set("nodeType", "interactiveSeq")
+    iseq_stCondLst = etree.SubElement(iseq_cTn, f"{{{P}}}stCondLst")
+    iseq_cond = etree.SubElement(iseq_stCondLst, f"{{{P}}}cond")
+    iseq_cond.set("evt", "onClick"); iseq_cond.set("delay", "0")
+    iseq_cond_tgt = etree.SubElement(iseq_cond, f"{{{P}}}tgtEl")
+    iseq_cond_sp = etree.SubElement(iseq_cond_tgt, f"{{{P}}}spTgt")
+    iseq_cond_sp.set("spid", str(pic_shape_id))
+    iseq_endSync = etree.SubElement(iseq_cTn, f"{{{P}}}endSync")
+    iseq_endSync.set("evt", "end"); iseq_endSync.set("delay", "0")
+    iseq_rtn = etree.SubElement(iseq_endSync, f"{{{P}}}rtn")
+    iseq_rtn.set("val", "all")
+    iseq_children = etree.SubElement(iseq_cTn, f"{{{P}}}childTnLst")
+
+    toggle_par = etree.SubElement(iseq_children, f"{{{P}}}par")
+    toggle_cTn = etree.SubElement(toggle_par, f"{{{P}}}cTn")
+    toggle_cTn.set("id", "9")
+    toggle_cTn.set("fill", "hold")
+    t_stCondLst = etree.SubElement(toggle_cTn, f"{{{P}}}stCondLst")
+    etree.SubElement(t_stCondLst, f"{{{P}}}cond").set("delay", "0")
+    t_children = etree.SubElement(toggle_cTn, f"{{{P}}}childTnLst")
+
+    t_inner_par = etree.SubElement(t_children, f"{{{P}}}par")
+    t_inner_cTn = etree.SubElement(t_inner_par, f"{{{P}}}cTn")
+    t_inner_cTn.set("id", "10")
+    t_inner_cTn.set("fill", "hold")
+    ti_stCondLst = etree.SubElement(t_inner_cTn, f"{{{P}}}stCondLst")
+    etree.SubElement(ti_stCondLst, f"{{{P}}}cond").set("delay", "0")
+    ti_children = etree.SubElement(t_inner_cTn, f"{{{P}}}childTnLst")
+
+    pause_par = etree.SubElement(ti_children, f"{{{P}}}par")
+    pause_cTn = etree.SubElement(pause_par, f"{{{P}}}cTn")
+    pause_cTn.set("id", "11")
+    pause_cTn.set("presetID", "2")
+    pause_cTn.set("presetClass", "mediacall")
+    pause_cTn.set("presetSubtype", "0")
+    pause_cTn.set("fill", "hold")
+    pause_cTn.set("nodeType", "clickEffect")
+    pause_stCondLst = etree.SubElement(pause_cTn, f"{{{P}}}stCondLst")
+    etree.SubElement(pause_stCondLst, f"{{{P}}}cond").set("delay", "0")
+    pause_children = etree.SubElement(pause_cTn, f"{{{P}}}childTnLst")
+
+    pause_cmd = etree.SubElement(pause_children, f"{{{P}}}cmd")
+    pause_cmd.set("type", "call")
+    pause_cmd.set("cmd", "togglePause")
+    pause_cBhvr = etree.SubElement(pause_cmd, f"{{{P}}}cBhvr")
+    pause_cBhvr_cTn = etree.SubElement(pause_cBhvr, f"{{{P}}}cTn")
+    pause_cBhvr_cTn.set("id", "12")
+    pause_cBhvr_cTn.set("dur", "1")
+    pause_cBhvr_cTn.set("fill", "hold")
+    pause_tgtEl = etree.SubElement(pause_cBhvr, f"{{{P}}}tgtEl")
+    pause_spTgt = etree.SubElement(pause_tgtEl, f"{{{P}}}spTgt")
+    pause_spTgt.set("spid", str(pic_shape_id))
+
+    iseq_next = etree.SubElement(iseq, f"{{{P}}}nextCondLst")
+    iseq_next_cond = etree.SubElement(iseq_next, f"{{{P}}}cond")
+    iseq_next_cond.set("evt", "onClick"); iseq_next_cond.set("delay", "0")
+    iseq_next_tgt = etree.SubElement(iseq_next_cond, f"{{{P}}}tgtEl")
+    iseq_next_sp = etree.SubElement(iseq_next_tgt, f"{{{P}}}spTgt")
+    iseq_next_sp.set("spid", str(pic_shape_id))
+
+    new_slide_xml = etree.tostring(slide_tree, xml_declaration=True,
+                                   encoding="UTF-8", standalone=True)
+
+    # ── 4. Write everything to a new zip ─────────────────────────────────────
+    out_buf = io.BytesIO()
+    out_zip = zipfile.ZipFile(out_buf, "w", zipfile.ZIP_DEFLATED)
+    for name in namelist:
+        if name == "[Content_Types].xml":
+            out_zip.writestr(name, new_ct_xml)
+        elif name == slide_xml_path:
+            out_zip.writestr(name, new_slide_xml)
+        elif name == slide_rels_path:
+            out_zip.writestr(name, new_rels_xml)
+        else:
+            out_zip.writestr(name, src_zip.read(name))
+    # New media file
+    if "ppt/media/timer_1min.mp4" not in namelist:
+        out_zip.writestr("ppt/media/timer_1min.mp4", mp4_bytes)
+    out_zip.close()
+    src_zip.close()
+    return out_buf.getvalue()
