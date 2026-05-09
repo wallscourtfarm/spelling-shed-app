@@ -453,22 +453,35 @@ def build_slides(lesson: dict) -> bytes:
         verb_only = ws["verbOnly"]
         verb_noun = ws["verbNoun"]
 
+        # ── Left box — scale row height to fit all words ──────────────────────
         rect(s, 0.35, BOX_Y, 4.45, BOX_H, C["WHITE"], C["PURPLE"], 3, radius=0.15)
         txt(s, ws["box1label"] + "  " + ws["box1sub"],
             0.45, BOX_Y + 0.08, 4.25, 0.35,
             size=14, bold=True, color=C["PURPLE"], align="center")
-        for i, w in enumerate(verb_only):
-            txt(s, w, 0.55, BOX_Y + 0.50 + i * 0.52, 4.15, 0.40,
-                size=13, bold=True, color=C["PINK"], align="center")
 
+        if verb_only:
+            available_h = BOX_H - 0.50 - 0.10  # below label, above bottom padding
+            row_h  = min(0.52, available_h / len(verb_only))
+            font_s = max(9, min(13, int(row_h * 22)))
+            for i, w in enumerate(verb_only):
+                txt(s, w, 0.55, BOX_Y + 0.50 + i * row_h, 4.15, row_h,
+                    size=font_s, bold=True, color=C["PINK"], align="center")
+
+        # ── Right box — scale row height to fit all words ─────────────────────
         rect(s, 5.2, BOX_Y, 4.45, BOX_H, C["WHITE"], C["GREEN_S"], 3, radius=0.15)
         txt(s, ws["box2label"], 5.3, BOX_Y + 0.08, 4.25, 0.35,
             size=14, bold=True, color=C["GREEN_S"], align="center")
-        for i, item in enumerate(verb_noun):
-            rich_txt(s, [
-                (item["word"], {"size": 12, "bold": True,  "color": C["PINK"]}),
-                ("  " + item["eg"], {"size": 10, "italic": True, "color": C["GREY"]}),
-            ], 5.4, BOX_Y + 0.47 + i * 0.362, 4.15, 0.34, valign="middle")
+
+        if verb_noun:
+            available_h = BOX_H - 0.47 - 0.10
+            row_h  = min(0.362, available_h / len(verb_noun))
+            font_w = max(9, min(12, int(row_h * 28)))
+            font_eg = max(8, font_w - 2)
+            for i, item in enumerate(verb_noun):
+                rich_txt(s, [
+                    (item["word"], {"size": font_w, "bold": True,  "color": C["PINK"]}),
+                    ("  " + item["eg"], {"size": font_eg, "italic": True, "color": C["GREY"]}),
+                ], 5.4, BOX_Y + 0.47 + i * row_h, 4.15, row_h, valign="middle")
 
         txt(s, ws["exampleLine"], 0.5, BOX_Y + BOX_H + 0.12, 9.0, 0.30,
             size=12, color=C["BLACK"], align="center")
