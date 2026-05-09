@@ -233,7 +233,10 @@ def build_slides(lesson: dict) -> bytes:
             txt(slide, text, x, y, w, h, size=20, bold=True,
                 color=C["BLACK"], align="center", margin=0)
 
-        badge(s, "Stage: " + lesson["stage"], 3.2, 1.75, 1.6, 0.75)
+        stage_val = str(lesson["stage"]).strip()
+        if stage_val.lower().startswith("stage"):
+            stage_val = stage_val[5:].strip().lstrip(":").strip()
+        badge(s, "Stage: " + stage_val, 3.2, 1.75, 1.6, 0.75)
         badge(s, "Lesson: " + CODE,           5.2, 1.75, 1.6, 0.75)
 
         obj = f"To spell words: {lesson['rule']}"
