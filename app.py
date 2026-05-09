@@ -10,6 +10,7 @@ import zipfile
 
 from content_generator import generate_lesson_json, suggest_words
 from worksheets_builder import build_worksheets
+from slides_builder import build_slides
 
 st.set_page_config(
     page_title="Spelling Shed Lesson Generator",
@@ -94,9 +95,9 @@ if st.button("Generate lesson", type="primary", use_container_width=True):
             st.error(e)
         st.stop()
 
-    with st.status("Generating lesson…", expanded=True) as status:
+    with st.status("Generating lesson… this takes about 30–40 seconds", expanded=True) as status:
 
-        st.write("Calling AI to generate lesson data…")
+        st.write("Calling AI to generate lesson data (this is the slow part)…")
         try:
             lesson = generate_lesson_json(
                 rule=spelling_rule.strip(),
@@ -107,6 +108,14 @@ if st.button("Generate lesson", type="primary", use_container_width=True):
         except Exception as ex:
             status.update(label="Content generation failed.", state="error")
             st.error(f"AI generation error: {ex}")
+            st.stop()
+
+        st.write("Building teaching slides…")
+        try:
+            slides_bytes = build_slides(lesson)
+        except Exception as ex:
+            status.update(label="Slides build failed.", state="error")
+            st.error(f"Slides build error: {ex}")
             st.stop()
 
         st.write("Building worksheets…")
@@ -123,29 +132,39 @@ if st.button("Generate lesson", type="primary", use_container_width=True):
 
     st.success(f"Lesson generated: **{spelling_rule}** ({year_group}, {len(words)} words)")
 
-    col_a, col_b, col_c = st.columns(3)
+    col_a, col_b, col_c, col_d = st.columns(4)
 
     with col_a:
         st.download_button(
-            label="⬇ Worksheets (PPTX)",
-            data=ws_bytes,
-            file_name=f"spelling_worksheets_{code}_{year_group}.pptx",
+            label="⬇ Teaching slides",
+            data=slides_bytes,
+            file_name=f"spelling_slides_{code}_{year_group}.pptx",
             mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
             use_container_width=True,
         )
 
     with col_b:
         st.download_button(
-            label="⬇ Lesson data (JSON)",
+            label="⬇ Worksheets",
+            data=ws_bytes,
+            file_name=f"spelling_worksheets_{code}_{year_group}.pptx",
+            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            use_container_width=True,
+        )
+
+    with col_c:
+        st.download_button(
+            label="⬇ Lesson data",
             data=json.dumps(lesson, indent=2, ensure_ascii=False),
             file_name=f"lesson_{code}_{year_group}.json",
             mime="application/json",
             use_container_width=True,
         )
 
-    with col_c:
+    with col_d:
         zip_buf = io.BytesIO()
         with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(f"spelling_slides_{code}_{year_group}.pptx", slides_bytes)
             zf.writestr(f"spelling_worksheets_{code}_{year_group}.pptx", ws_bytes)
             zf.writestr(f"lesson_{code}_{year_group}.json",
                         json.dumps(lesson, indent=2, ensure_ascii=False))
