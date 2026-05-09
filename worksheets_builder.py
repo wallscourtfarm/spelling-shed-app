@@ -228,7 +228,7 @@ def build_worksheets(lesson: dict) -> bytes:
     def build_slide1():
         slide = prs.slides.add_slide(BLANK)
         add_header(slide, "Word Sort",
-                   "Can you sort this week's words? Some can ONLY be a verb. Others can be a verb OR a noun.",
+                   lesson["wordSortQ"],
                    f"{CODE}.6")
         chip_w, chip_h, chip_gap = 0.81, 0.34, 0.042
         n = len(WORDS)

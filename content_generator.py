@@ -47,7 +47,7 @@ You must follow the JSON schema exactly and generate every field. Return ONLY va
 
   "defs": { "<word>": string },       // One definition per word
 
-  "sentences": { "<word>": string },  // One sentence per word, word appears exactly once
+  "sentences": { "<word>": string },  // One COMPLETE sentence per word. The target word appears exactly once as a real word — NEVER use blanks or underscores. The builder inserts blanks automatically. Good: "The brave knight rode into battle." Bad: "The brave _____ rode into battle."
 
   "wordMaps": {
     "words": [string],     // 6 of the words — pick those that best illustrate the rule
@@ -248,3 +248,48 @@ def _validate(lesson: dict, words: list):
         raise ValueError(
             f"wordSort words {sorted(sort_words)} do not match lesson words {sorted(words)}."
         )
+
+
+def suggest_words(rule: str, year_group: str, n: int = 10) -> list:
+    """
+    Ask the API to suggest n spelling words for a given rule and year group.
+    Returns a list of word strings.
+    """
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise ValueError("ANTHROPIC_API_KEY environment variable not set.")
+
+    client = anthropic.Anthropic(api_key=api_key)
+
+    stage_map = {"Y2": "Stage 2", "Y3": "Stage 3", "Y4": "Stage 4", "Y5": "Stage 5", "Y6": "Stage 6"}
+    stage = stage_map.get(year_group, "Stage 4")
+    age_map = {"Y2": "6-7", "Y3": "7-8", "Y4": "8-9", "Y5": "9-10", "Y6": "10-11"}
+    age = age_map.get(year_group, "8-9")
+
+    prompt = f"""Suggest exactly {n} spelling words for a UK primary school Spelling Shed lesson.
+
+Spelling rule: {rule}
+Year group: {year_group} ({stage}, ages {age})
+
+Requirements:
+- All words must clearly illustrate the spelling rule
+- Words must be appropriate in difficulty for {year_group} pupils aged {age}
+- Words should be varied — different lengths, different contexts
+- All words must be real, common English words pupils will encounter in reading
+- Return ONLY a JSON array of {n} lowercase strings, nothing else
+- Example format: ["word1", "word2", "word3"]"""
+
+    response = client.messages.create(
+        model="claude-sonnet-4-20250514",
+        max_tokens=200,
+        messages=[{"role": "user", "content": prompt}]
+    )
+
+    raw = response.content[0].text.strip()
+    raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.IGNORECASE)
+    raw = re.sub(r'\s*```$', '', raw)
+
+    words = json.loads(raw)
+    if not isinstance(words, list):
+        raise ValueError("Word suggestion did not return a list.")
+    return [w.strip().lower() for w in words if isinstance(w, str)]

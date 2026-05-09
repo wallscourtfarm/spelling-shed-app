@@ -6,12 +6,10 @@ Uses the Anthropic API to generate lesson content, then builds PPTX files via py
 
 import streamlit as st
 import json
-import os
+import io
 import zipfile
-import tempfile
-from pathlib import Path
 
-from content_generator import generate_lesson_json
+from content_generator import generate_lesson_json, suggest_words
 from worksheets_builder import build_worksheets
 
 st.set_page_config(
@@ -23,12 +21,10 @@ st.set_page_config(
 st.title("Spelling Shed Lesson Generator")
 st.caption("Wallscourt Farm Academy — EdShed-style lesson resources")
 
-# ── Inputs ────────────────────────────────────────────────────────────────────
+# ── Step 1: Rule and year group ───────────────────────────────────────────────
 
-with st.form("lesson_form"):
-
+with st.form("rule_form"):
     col1, col2 = st.columns(2)
-
     with col1:
         year_group = st.selectbox(
             "Teaching year group",
@@ -36,7 +32,6 @@ with st.form("lesson_form"):
             index=2,
             help="The year group being taught. If reteaching a lower-year rule, set this to the actual class."
         )
-
     with col2:
         rule_origin = st.selectbox(
             "Rule level",
@@ -47,38 +42,61 @@ with st.form("lesson_form"):
 
     spelling_rule = st.text_input(
         "Spelling rule",
-        placeholder="e.g. Silent letter — K  /  Adding the suffix -tion  /  Words ending in -ture",
-        help="Describe the rule clearly. This appears as the lesson title."
+        placeholder="e.g. Silent letter — K  /  Words ending in -tion  /  Doubling the consonant",
+        help="Describe the rule clearly. This becomes the lesson title."
     )
 
     word_list_raw = st.text_area(
         "Word list (one per line, 8–10 words)",
-        height=220,
-        placeholder="knight\nkneel\nknack\nknob\nknit\nknew\nknife\nknock\nknot\nknow",
-        help="Enter 8–10 spelling words for this lesson."
+        height=200,
+        placeholder="Leave blank to get word suggestions, or enter your own words here.",
+        help="Enter 8–10 words, or leave blank and click Suggest words first."
     )
 
     key_spelling = st.text_input(
         "Key spelling word (optional)",
         placeholder="e.g. because",
-        help="A word from your class key spelling list to practise at the start. Leave blank if not needed."
+        help="A word from your class key spelling list. Leave blank if not needed."
     )
 
-    st.divider()
-    submitted = st.form_submit_button("Generate lesson", type="primary", use_container_width=True)
+    col_a, col_b = st.columns(2)
+    with col_a:
+        suggest_btn = st.form_submit_button("Suggest words", use_container_width=True)
+    with col_b:
+        generate_btn = st.form_submit_button("Generate lesson", type="primary", use_container_width=True)
 
 
-# ── On submit ─────────────────────────────────────────────────────────────────
+# ── Word suggestion ───────────────────────────────────────────────────────────
 
-if submitted:
+if suggest_btn:
+    if not spelling_rule.strip():
+        st.error("Please enter a spelling rule first.")
+        st.stop()
+
+    with st.spinner("Suggesting words…"):
+        try:
+            suggested = suggest_words(spelling_rule.strip(), year_group)
+            st.session_state["suggested_words"] = suggested
+        except Exception as ex:
+            st.error(f"Word suggestion failed: {ex}")
+            st.stop()
+
+if "suggested_words" in st.session_state and not generate_btn:
+    st.subheader("Suggested words")
+    st.caption("Copy these into the word list above, edit as needed, then click Generate lesson.")
+    st.code("\n".join(st.session_state["suggested_words"]), language=None)
+
+
+# ── Generate ──────────────────────────────────────────────────────────────────
+
+if generate_btn:
     words = [w.strip() for w in word_list_raw.strip().splitlines() if w.strip()]
 
-    # Validate
     errors = []
     if not spelling_rule.strip():
         errors.append("Please enter a spelling rule.")
     if len(words) < 6:
-        errors.append("Please enter at least 6 words.")
+        errors.append("Please enter at least 6 words (or click Suggest words first).")
     if len(words) > 12:
         errors.append("Please enter no more than 12 words.")
 
@@ -87,8 +105,7 @@ if submitted:
             st.error(e)
         st.stop()
 
-    # Generate
-    with st.status("Generating lesson content…", expanded=True) as status:
+    with st.status("Generating lesson…", expanded=True) as status:
 
         st.write("Calling AI to generate lesson data…")
         try:
@@ -113,10 +130,7 @@ if submitted:
 
         status.update(label="Done!", state="complete")
 
-    # ── Downloads ─────────────────────────────────────────────────────────────
-
     code = lesson.get("code", "XX")
-    rule_slug = spelling_rule.strip().replace(" ", "_").replace("/", "-")[:40]
 
     st.success(f"Lesson generated: **{spelling_rule}** ({year_group}, {len(words)} words)")
 
@@ -124,7 +138,7 @@ if submitted:
 
     with col_a:
         st.download_button(
-            label="⬇ Download worksheets",
+            label="⬇ Worksheets (PPTX)",
             data=ws_bytes,
             file_name=f"spelling_worksheets_{code}_{year_group}.pptx",
             mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -133,17 +147,14 @@ if submitted:
 
     with col_b:
         st.download_button(
-            label="⬇ Download lesson.json",
+            label="⬇ Lesson data (JSON)",
             data=json.dumps(lesson, indent=2, ensure_ascii=False),
             file_name=f"lesson_{code}_{year_group}.json",
             mime="application/json",
             use_container_width=True,
-            help="Raw lesson data — useful for debugging or reuse."
         )
 
     with col_c:
-        # Bundle both into a zip
-        import io
         zip_buf = io.BytesIO()
         with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr(f"spelling_worksheets_{code}_{year_group}.pptx", ws_bytes)
@@ -151,14 +162,13 @@ if submitted:
                         json.dumps(lesson, indent=2, ensure_ascii=False))
         zip_buf.seek(0)
         st.download_button(
-            label="⬇ Download all (ZIP)",
+            label="⬇ All files (ZIP)",
             data=zip_buf.getvalue(),
             file_name=f"spelling_lesson_{code}_{year_group}.zip",
             mime="application/zip",
             use_container_width=True,
         )
 
-    # Preview of generated content
     with st.expander("Preview generated content"):
         st.write(f"**Rule:** {lesson.get('rule')}")
         st.write(f"**Code:** {lesson.get('code')}")
