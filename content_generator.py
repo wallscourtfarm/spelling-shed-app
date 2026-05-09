@@ -101,10 +101,21 @@ You must follow the JSON schema exactly and generate every field. Return ONLY va
   "clozeOrder": [string],  // All words shuffled — no word in same position as words[]
 
   "etymology": {
-    "word":     string,
-    "baseForm": string,
+    "word":     string,        // The target word the children should guess
+    "baseForm": string,        // Base form of the target word (e.g. "race" for "racing")
     "clicks": [ {"label": string, "body": string} ]
-    // Exactly 6 stages
+    // Exactly 6 stages, ordered OLDEST origin → MOST RECENT.
+    // Card 1 = the most ancient or distant root (Proto-Indo-European, Latin, Greek, Old Norse, Celtic etc.)
+    // Card 2 = the next stage of the journey
+    // Card 3 = the next stage
+    // Cards 1, 2 and 3 are the only cards visible to the class as the guessing
+    // clues. They MUST NOT mention the target word, baseForm, or any close
+    // derivative (so for "racing"/"race", clues 1-3 must avoid the strings
+    // "race", "racing", "racer", "raced", "racecourse" etc.).
+    // Clues 1-3 should describe meaning, origin, related concepts and language
+    // history WITHOUT naming the answer.
+    // Cards 4, 5 and 6 appear after the answer is revealed, so THESE may freely
+    // mention the target word — they are the "now you know" follow-up notes.
   },
 
   "wordShed": {
@@ -198,6 +209,33 @@ The contents of `verbOnly` plus all the `word` values in `verbNoun` must togethe
 
 The `eg` field on each verbNoun entry is optional context shown alongside the word in the answers slide. For grammatical sorts use it for example sentences; for spelling-pattern sorts you can leave it empty ("").
 
+## CRITICAL: etymology card ordering and word-hiding
+
+The etymology slide is a guessing activity. Cards 1, 2 and 3 (the first three entries in `etymology.clicks`) are revealed one at a time as clues. Children must guess the target word from these three clues alone before the answer is revealed. Cards 4, 5 and 6 are follow-up information shown after the answer.
+
+Two strict rules:
+
+1. ORDER: cards 1-3 must go OLDEST origin → MOST RECENT. The first card is the most ancient root (e.g. Proto-Indo-European, Old Norse, Latin, Greek, Celtic, Sanskrit, Old English depending on the word). The second card is the next stage of the journey. The third card is the most recent or specific stage that's still a clue. Never lead with "Modern English" or "Today we use...". Modern usage belongs in the LATER cards (4-6) which appear after the reveal.
+
+2. NO ANSWER REVEAL: cards 1, 2 and 3 must NEVER contain the target word, the baseForm, or any close derivative. For example, if the target word is "racing" and baseForm is "race":
+   - FORBIDDEN strings in clues 1-3: "race", "racing", "racer", "raced", "races", "racecourse", "raceway"
+   - The clue text must describe the meaning, origin and related concepts WITHOUT naming the answer.
+   - Use phrases like "the word", "this word", "the verb", "an action meaning…" instead of repeating the answer.
+   - Cards 4, 5 and 6 may freely use the target word — they are the post-reveal explanation.
+
+Example of GOOD etymology for target "racing" (baseForm "race"):
+  click 1: "Old Norse — comes from a word meaning 'a running, a rush'"
+  click 2: "Old French — borrowed into French as a word meaning 'family, generation, breed'"
+  click 3: "Modern usage — now describes a contest of speed between competitors"
+  click 4: "The verb form 'race' became common in English from the 14th century."
+  click 5: "Adding -ing turns the verb into the present participle 'racing'."
+  click 6: "Did you know? The same Old Norse root gave us 'rush' too."
+
+Example of BAD etymology (DO NOT do this):
+  click 1: "Modern English — the word 'racing' comes from the verb 'race'..."  ← reveals answer in card 1
+  click 2: "Old French — race meaning..."  ← reveals answer
+  click 3: "Old Norse — ..."  ← order is reversed (most recent first)
+
 ## Critical rules
 - Return ONLY valid JSON. No markdown, no explanation.
 - Generate every field completely — no placeholders, no nulls.
@@ -209,6 +247,7 @@ The `eg` field on each verbNoun entry is optional context shown alongside the wo
 - morphMatrix.baseWord must differ from wordShed.baseWord.
 - starter.answers must have exactly 6 entries.
 - etymology.clicks must have exactly 6 entries.
+- etymology.clicks[0..2] (the first 3 cards, shown to the class as guessing clues) MUST NOT contain the target word, baseForm or any close derivative. Order them oldest origin first, never modern usage first.
 - morphMatrix.suffixes and morphMatrix.answers must each have exactly 6 entries.
 - spellData must have exactly one row per word in words[] order.
 - Split digraph + suffix rules above must be applied to every word, anywhere in the output.
@@ -425,8 +464,76 @@ def _validate(lesson: dict, words: list):
         lesson["clozeOrder"] = shuffled
 
     # etymology clicks
-    if len(lesson.get("etymology", {}).get("clicks", [])) != 6:
+    etym = lesson.get("etymology", {})
+    if len(etym.get("clicks", [])) != 6:
         raise ValueError("etymology.clicks must have exactly 6 entries.")
+
+    # etymology clues (first 3 cards) must not give the answer away.
+    # We forbid the target word, the baseForm, and a few simple morphological
+    # variants — anything that pupils would immediately recognise as the answer.
+    target_word = (etym.get("word") or "").strip().lower()
+    base_form   = (etym.get("baseForm") or "").strip().lower()
+
+    def _morph_variants(w):
+        """Return a small set of close spelling derivatives of w."""
+        if not w or len(w) < 3:
+            return set()
+        v = {w}
+        # Drop trailing -e, -d, -s if present
+        for suf in ("ed", "ing", "es", "s", "er", "ers", "est", "y", "ly"):
+            if w.endswith(suf):
+                stem = w[:-len(suf)]
+                if len(stem) >= 3:
+                    v.add(stem)
+        # Add common derivatives
+        stems_to_extend = list(v)
+        for stem in stems_to_extend:
+            # Drop final -e then add suffix (split-digraph friendly)
+            stem_no_e = stem[:-1] if stem.endswith("e") else stem
+            for suf in ("", "s", "es", "ed", "ing", "er", "ers", "est"):
+                cand = stem_no_e + suf
+                if len(cand) >= 3:
+                    v.add(cand)
+                cand2 = stem + suf
+                if len(cand2) >= 3:
+                    v.add(cand2)
+        return v
+
+    forbidden_in_clues = set()
+    for w in (target_word, base_form):
+        forbidden_in_clues |= _morph_variants(w)
+    # Don't accidentally forbid generic short fragments
+    forbidden_in_clues = {w for w in forbidden_in_clues if len(w) >= 4}
+
+    bad_clues = []
+    for i in range(3):  # only check cards 1, 2, 3 — the guessing clues
+        card = etym["clicks"][i]
+        text = (card.get("label", "") + " " + card.get("body", "")).lower()
+        for forbidden in forbidden_in_clues:
+            # Word-boundary match so "race" doesn't match inside "embrace"
+            if re.search(r"\b" + re.escape(forbidden) + r"\b", text):
+                bad_clues.append((i + 1, forbidden, card.get("body", "")[:80]))
+                break
+
+    if bad_clues:
+        details = "; ".join(
+            f"card {n} contains '{w}': {snippet!r}"
+            for n, w, snippet in bad_clues
+        )
+        raise ValueError(
+            f"Etymology guessing clues (cards 1-3) reveal the answer word: "
+            f"{details}. Cards 1-3 must not contain '{target_word}', '{base_form}' "
+            f"or close variants. Regenerate the lesson."
+        )
+
+    # First clue should NOT start with "Modern" (etymology cards must go oldest first).
+    first_label = (etym["clicks"][0].get("label") or "").strip().lower()
+    if first_label.startswith("modern"):
+        raise ValueError(
+            f"Etymology card 1 starts with 'Modern' — cards must run oldest origin "
+            f"first, modern usage last. Got label: {etym['clicks'][0].get('label')!r}. "
+            f"Regenerate the lesson."
+        )
 
     # morphMatrix
     mm = lesson.get("morphMatrix", {})
