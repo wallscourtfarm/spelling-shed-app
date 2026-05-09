@@ -74,15 +74,22 @@ You must follow the JSON schema exactly and generate every field. Return ONLY va
 
   "wordSortQ": string,
   "wordSort": {
-    "box1label": string,
-    "box1sub":   string,
-    "box2label": string,
-    "box2sub":   string,
+    "box1label": string,    // Label for first sort category (e.g. "a_e pattern", "verb only", "1 syllable")
+    "box1sub":   string,    // Optional sub-text under box1label
+    "box2label": string,    // Label for second sort category
+    "box2sub":   string,    // Optional sub-text under box2label
     "hint":      string,
     "answerNote":  string,
     "exampleLine": string,
-    "verbOnly":  [string],
+    "verbOnly":  [string],   // Words belonging in BOX 1 (despite the legacy name).
+                              // The contents must match box1label's sort criterion,
+                              // NOT literally "verb-only" words. The field name is a
+                              // historical label and means "the first sort group".
     "verbNoun":  [ {"word": string, "eg": string} ]
+                              // Words belonging in BOX 2 (despite the legacy name).
+                              // The contents must match box2label's sort criterion.
+                              // "eg" is a short example/note shown alongside each word
+                              // (can be a sample sentence, alternative form, or note).
     // verbOnly + all verbNoun[].word must equal all words exactly
   },
 
@@ -156,6 +163,36 @@ The rules:
 5. The spellData distractor "opts" can include the wrong form (e.g. "bakeing") AS A DELIBERATE WRONG OPTION, but the correct entry (correct=N) must point to the right form.
 
 Validate every word in your output against these rules before returning. Reject any word that has "magic-e base + ing/ed/er/est" with the e still present (e.g. anything ending in "eing", "eed" except past-tense regular -ed verbs that don't have a magic e in their base, "eer", "eest").
+
+## CRITICAL: wordSort field semantics
+
+The wordSort fields `verbOnly` and `verbNoun` are LEGACY NAMES from when the only sort was verb-only vs verb/noun. They DO NOT mean the contents must be sorted by part of speech. They are simply "the array of words for box 1" and "the array of words for box 2".
+
+You must populate `verbOnly` and `verbNoun` based on the SORT CRITERION you defined in `box1label` and `box2label`. These should reflect the spelling rule being taught, not part of speech.
+
+Examples of correct sorts for different lessons:
+
+* Split digraph patterns (a_e vs i_e/o_e):
+  - box1label="a_e pattern", verbOnly=["danced","baked","saved","shared","placed","glared"]
+  - box2label="i_e or o_e pattern", verbNoun=[{"word":"smiled","eg":""},{"word":"hoped","eg":""},{"word":"prized","eg":""}]
+
+* Syllable count (1 vs 2):
+  - box1label="1 syllable", verbOnly=["tried","cried","dried"]
+  - box2label="2 syllables", verbNoun=[{"word":"carried","eg":""},...]
+
+* Suffix type (-ed vs -ing):
+  - box1label="-ed words", verbOnly=["hoped","baked","skated","moved"]
+  - box2label="-ing words", verbNoun=[{"word":"hiking","eg":""},...]
+
+* Word class (verb only vs verb that can be noun) — only when the rule is grammatical:
+  - box1label="verb only", verbOnly=["tried","dried","cried"]
+  - box2label="verb or noun", verbNoun=[{"word":"carried","eg":"She carried the books (verb)"},...]
+
+ALWAYS choose a sort that makes sense for THIS lesson's rule. Never default to part-of-speech sorting unless the lesson is explicitly about word classes.
+
+The contents of `verbOnly` plus all the `word` values in `verbNoun` must together equal every word in the lesson, with no duplicates and nothing missing.
+
+The `eg` field on each verbNoun entry is optional context shown alongside the word in the answers slide. For grammatical sorts use it for example sentences; for spelling-pattern sorts you can leave it empty ("").
 
 ## Critical rules
 - Return ONLY valid JSON. No markdown, no explanation.
