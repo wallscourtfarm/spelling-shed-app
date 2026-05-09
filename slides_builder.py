@@ -512,8 +512,8 @@ def build_slides(lesson: dict) -> bytes:
         for g in phonemes:
             for ch in g["l"]:
                 cell = tbl.cell(0, ci)
-                cell.fill.solid()
-                cell.fill.fore_color.rgb = rgb(C["WHITE"])
+                # Transparent fill so shapes drawn below are visible
+                cell.fill.background()
                 tf = cell.text_frame
                 _bodyPr(tf._txBody, valign="middle", margin_in=0)
                 p = tf.paragraphs[0]
