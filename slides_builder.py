@@ -304,9 +304,13 @@ def build_slides(lesson: dict) -> bytes:
                 size=11, italic=True, color=C["GREY"], align="center")
 
         rule_y = sy + 2 * (PAIR_H + row_gap) + 0.14
-        rect(s, 0.5, rule_y, 9.0, 0.45, "FFF9C4", C["YELLOW"], 1.5)
-        txt(s, lesson["starter"]["ruleBox"], 0.5, rule_y, 9.0, 0.45,
-            size=16, bold=True, color=C["BLACK"], align="center", margin=0)
+        rect(s, 0.5, rule_y, 9.0, 0.9, "FFF9C4", C["YELLOW"], 1.5)
+        txt(s, lesson["starter"]["ruleBox"], 0.5, rule_y + 0.04, 9.0, 0.32,
+            size=15, bold=True, color=C["BLACK"], align="center", margin=0)
+        rule_text = lesson["starter"].get("ruleText", "")
+        if rule_text:
+            txt(s, rule_text, 0.7, rule_y + 0.36, 8.6, 0.5,
+                size=12, color=C["BLACK"], align="center", margin=0)
 
     # ════════════════════════════════════════════════════════════════════════
     # SLIDE 4 — This Week's Words
@@ -318,15 +322,15 @@ def build_slides(lesson: dict) -> bytes:
                   lesson["thisWeeksWordsQ"], f"{CODE}.3")
 
         cell_w = 9.0 / 5
-        fs = min(fit_font(w, cell_w, 32, 16) for w in WORDS)
+        # draw_sound_buttons cell width = font/28 * 0.40 per letter; fit longest word
+        max_chars = max(len(w) for w in WORDS)
+        fs = int(min(22, cell_w * 0.85 * 28 / (max_chars * 0.40)))
 
         for ri, row_words in enumerate([WORDS[:5], WORDS[5:]]):
             for ci, w in enumerate(row_words):
-                x = 0.5 + ci * cell_w
-                y = CONT_Y + 0.3 + ri * 1.35
-                txt(s, w, x, y, cell_w, 0.85,
-                    size=fs, color=C["BLACK"], align="center", valign="bottom")
-                rect(s, x + 0.3, y + 0.88, cell_w - 0.6, 0.07, C["PINK"])
+                cx = 0.5 + ci * cell_w + cell_w / 2
+                wy = CONT_Y + 0.45 + ri * 1.30
+                draw_sound_buttons(s, w, cx, wy, fs)
 
         txt(s, lesson["thisWeeksWordsPrompt"],
             0.5, CONT_Y + 3.05, 4.3, 0.4,
@@ -749,10 +753,10 @@ def build_slides(lesson: dict) -> bytes:
              {"text": "",      "fill": C["WHITE"]}]
             for w in WORDS
         ]
-        rh = [0.4] + [0.36] * len(rows)
+        rh = [0.36] + [0.34] * len(rows)
         table(s, [hdr] + rows,
               0.35, CONT_Y + 0.05, 9.3, CONT_H - 0.1,
-              [1.55, 3.55, 4.2], rh)
+              [1.4, 3.7, 4.2], rh)
 
     # ════════════════════════════════════════════════════════════════════════
     # SLIDE 13 — Definitions and In a Sentence (answers)
@@ -775,10 +779,10 @@ def build_slides(lesson: dict) -> bytes:
               "color": C["PINK"]}]
             for w in WORDS
         ]
-        rh = [0.4] + [0.36] * len(rows)
+        rh = [0.36] + [0.34] * len(rows)
         table(s, [hdr] + rows,
               0.35, CONT_Y + 0.05, 9.3, CONT_H - 0.1,
-              [1.55, 3.4, 4.35], rh)
+              [1.4, 3.55, 4.35], rh)
 
     # ════════════════════════════════════════════════════════════════════════
     # SLIDE 14 — Spell Check (blank)
@@ -885,47 +889,63 @@ def build_slides(lesson: dict) -> bytes:
 
     def _word_shed_structure(s, show_answers=False):
         """Shared structure for slides 18 and 19."""
-        rect(s, 0, BAR_Y, SW, SH - BAR_Y, C["GREEN_B"])
-        rect(s, 0.1, 0.05, 1.3, 0.75, C["YELLOW"])
-        txt(s, "Independent", 0.1, 0.05, 1.3, 0.75,
-            size=11, bold=True, color=C["WHITE"], align="center", margin=0)
         slide_num = f"{CODE}.{'18' if show_answers else '17'}"
-        txt(s, slide_num, 8.8, 0.6, 1.1, 0.28,
-            size=14, color=C["GREY"], align="right")
+        add_frame(s, "Independent", "Word Shed",
+                  "Build everything you can around the base word.", slide_num)
 
-        triangle(s, 0.6, 0.02, 8.8, 0.95, "A0A0A0", "808080", 1)
-        rect(s, 0.6, 0.88, 8.8, 4.45, "C4956A", "8B5E3C", 2)
-        rect(s, 0.88, 1.08, 8.24, 4.12, C["WHITE"], "8B5E3C", 1)
-        txt(s, "Word Shed", 2.5, 0.08, 5.0, 0.7,
-            size=30, bold=True, color=C["YELLOW"], align="center")
+        # Brown frame inside the content area, leaving the school header visible
+        FY = CONT_Y + 0.05
+        FH = CONT_H - 0.10
+        rect(s, 0.6, FY, 8.8, FH, "C4956A", "8B5E3C", 2)
+        rect(s, 0.85, FY + 0.18, 8.3, FH - 0.36, C["WHITE"], "8B5E3C", 1)
 
-        mid_x, mid_y = 5.0, 3.14
-        rect(s, mid_x - 0.02, 1.08, 0.04, 4.12, "AAAAAA")
-        rect(s, 0.88, mid_y - 0.02, 8.24, 0.04, "AAAAAA")
-        rect(s, mid_x - 1.1, mid_y - 0.3, 2.2, 0.6, C["WHITE"], C["BLACK"], 1.5)
+        # Centre dividers and central base-word badge
+        cx_split = 5.0
+        body_x_l = 0.85
+        body_x_r = cx_split + 0.05
+        body_w = (cx_split - 0.05) - body_x_l  # ~4.10
+        body_y_top = FY + 0.18
+        body_y_bot = FY + FH - 0.18
+        body_h = body_y_bot - body_y_top
+        mid_y = body_y_top + body_h / 2
+
+        rect(s, cx_split - 0.02, body_y_top, 0.04, body_h, "AAAAAA")
+        rect(s, body_x_l, mid_y - 0.02, (body_x_r + body_w) - body_x_l, 0.04, "AAAAAA")
+
+        # Central base word badge
+        rect(s, cx_split - 1.1, mid_y - 0.28, 2.2, 0.56,
+             C["WHITE"], C["BLACK"], 1.5)
         txt(s, lesson["wordShed"]["baseWord"],
-            mid_x - 1.1, mid_y - 0.3, 2.2, 0.6,
-            size=18, bold=True, color=C["BLACK"], align="center", margin=0)
+            cx_split - 1.1, mid_y - 0.28, 2.2, 0.56,
+            size=20, bold=True, color=C["BLACK"], align="center", margin=0)
 
         ws = lesson["wordShed"]
-        sections = [
-            ("Definition",     0.95, 1.12, ws["def"]      if show_answers else ""),
-            ("In a Sentence",  mid_x + 0.1, 1.12, ws["sentence"]  if show_answers else ""),
-            ("Rhymes With...", 0.95, mid_y + 0.42, ws["rhymes"]   if show_answers else ""),
-            ("Add Prefixes or Suffixes", mid_x + 0.1, mid_y + 0.42, ws["morphology"] if show_answers else ""),
+        # Each quadrant: label at top, body below
+        bottom_label_y = mid_y + 0.32  # below the central badge
+        quadrants = [
+            ("Definition",                body_x_l, body_y_top + 0.05, body_w,
+             ws["def"] if show_answers else ""),
+            ("In a Sentence",             body_x_r, body_y_top + 0.05, body_w,
+             ws["sentence"] if show_answers else ""),
+            ("Rhymes With...",            body_x_l, bottom_label_y, body_w,
+             ws["rhymes"] if show_answers else ""),
+            ("Add Prefixes or Suffixes",  body_x_r, bottom_label_y, body_w,
+             ws["morphology"] if show_answers else ""),
         ]
-        body_coords = [
-            (0.95, 1.5, 3.85, 1.5),
-            (mid_x + 0.1, 1.5, 3.85, 1.5),
-            (0.95, mid_y + 0.8, 3.85, 1.55),
-            (mid_x + 0.1, mid_y + 0.8, 3.85, 1.55),
-        ]
-        for (label, lx, ly, body_text), (bx, by, bw, bh) in zip(sections, body_coords):
-            txt(s, label, lx, ly, 3.85, 0.35,
-                size=14, bold=True, color=C["BLACK"], valign="middle")
+        for label, lx, ly, lw, body_text in quadrants:
+            txt(s, label, lx, ly, lw, 0.30,
+                size=13, bold=True, color=C["BLACK"], align="left", valign="top", margin=0)
             if body_text:
+                # Bodies sit below their label; the upper row stops above the central badge
+                bx, bw = lx, lw
+                if ly < mid_y:
+                    by = ly + 0.34
+                    bh = (mid_y - 0.32) - by
+                else:
+                    by = ly + 0.34
+                    bh = (body_y_bot - 0.05) - by
                 txt(s, body_text, bx, by, bw, bh,
-                    size=13, color=C["PINK"], valign="top")
+                    size=12, color=C["PINK"], align="left", valign="top")
 
     def slide18():
         s = prs.slides.add_slide(BLANK)
@@ -961,7 +981,7 @@ def build_slides(lesson: dict) -> bytes:
         txt(s, "Suffix", 5.0, CONT_Y + 0.15, 4.6, 0.38,
             size=20, bold=True, color=C["PURPLE"], align="center")
 
-        gcw, grh = 2.3, 0.84
+        gcw, grh = 2.3, 1.10
         for i, sf in enumerate(mm["suffixes"]):
             col, row = i % 2, i // 2
             x = 5.0 + col * gcw
@@ -969,13 +989,14 @@ def build_slides(lesson: dict) -> bytes:
             rect(s, x, y, gcw, grh, C["WHITE"], C["PURPLE"], 2)
             if show_answers:
                 ans = mm["answers"][i] if i < len(mm["answers"]) else ""
-                rich_txt(s, [
-                    (sf + "\n",  {"size": 14, "color": C["GREY"]}),
-                    (ans,        {"size": 22, "bold": True, "color": C["PINK"]}),
-                ], x, y, gcw, grh, align="center", valign="middle", margin=0)
+                txt(s, sf, x, y + 0.05, gcw, 0.28,
+                    size=12, color=C["GREY"], align="center", valign="top", margin=0)
+                txt(s, ans, x + 0.06, y + 0.34, gcw - 0.12, grh - 0.40,
+                    size=14, bold=True, color=C["PINK"],
+                    align="center", valign="middle", margin=0)
             else:
                 txt(s, sf, x, y, gcw, grh,
-                    size=26, color=C["BLACK"], align="center", valign="middle", margin=0)
+                    size=24, color=C["BLACK"], align="center", valign="middle", margin=0)
 
     def slide20():
         s = prs.slides.add_slide(BLANK)
