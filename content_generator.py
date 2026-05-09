@@ -129,13 +129,17 @@ You must follow the JSON schema exactly and generate every field. Return ONLY va
 ## Year Group Content Guidance
 """ + YEAR_GROUP_GUIDANCE + """
 
-## CRITICAL: Magic-e (split digraph) + suffix rules
+## CRITICAL: never use the phrase "magic-e" or "magic e"
 
-When the user-provided word list contains words built from a magic-e base word with -ed, -ing, -er or -est added, you MUST apply the correct spelling rules. Many earlier outputs have produced wrong forms like "bakeing", "driveing", "makeing", "smileing". These are spelling errors and must never appear in any field of the output (words, starter.answers, sentences, defs, spellData.opts, clozeOrder, wordShed, morphMatrix, etymology, syllableBreaks).
+The phrase "magic-e" must never appear in any field of the output. The school does not teach this phrase. Always refer to the pattern as "split digraph" (e.g. a_e, i_e, o_e, u_e, e_e). If you find yourself wanting to write "magic e" or "magic-e", substitute "split digraph" or describe the specific pattern (a_e, i_e etc.).
+
+## CRITICAL: split digraph + suffix rules
+
+When the user-provided word list contains words built from a split digraph base word (one ending in vowel + consonant + e where the e makes the vowel long, e.g. bake, drive, hope) with -ed, -ing, -er or -est added, you MUST apply the correct spelling rules. Many earlier outputs have produced wrong forms like "bakeing", "driveing", "makeing", "smileing". These are spelling errors and must never appear in any field of the output (words, starter.answers, sentences, defs, spellData.opts, clozeOrder, wordShed, morphMatrix, etymology, syllableBreaks).
 
 The rules:
 
-1. Magic-e base + ING → DROP the e, then add ing.
+1. Split digraph base + ING → DROP the e, then add ing.
    - bake + ing → baking (NOT "bakeing")
    - drive + ing → driving (NOT "driveing")
    - make + ing → making (NOT "makeing")
@@ -147,14 +151,14 @@ The rules:
    - skate + ing → skating (NOT "skateing")
    - hike + ing → hiking (NOT "hikeing")
 
-2. Magic-e base + ED → DROP the e, then add ed (the final spelling ends in -ed not -eed).
+2. Split digraph base + ED → DROP the e, then add ed (the final spelling ends in -ed not -eed).
    - bake + ed → baked (NOT "bakeed")
    - hope + ed → hoped (NOT "hopeed")
    - move + ed → moved (NOT "moveed")
    - skate + ed → skated (NOT "skateed")
    - race + ed → raced (NOT "raceed")
 
-3. Magic-e base + ER / EST → DROP the e, then add er/est.
+3. Split digraph base + ER / EST → DROP the e, then add er/est.
    - large + er → larger (NOT "largeer")
    - nice + est → nicest (NOT "niceest")
 
@@ -162,7 +166,7 @@ The rules:
 
 5. The spellData distractor "opts" can include the wrong form (e.g. "bakeing") AS A DELIBERATE WRONG OPTION, but the correct entry (correct=N) must point to the right form.
 
-Validate every word in your output against these rules before returning. Reject any word that has "magic-e base + ing/ed/er/est" with the e still present (e.g. anything ending in "eing", "eed" except past-tense regular -ed verbs that don't have a magic e in their base, "eer", "eest").
+Validate every word in your output against these rules before returning. Reject any word that has "split digraph base + ing/ed/er/est" with the e still present (e.g. anything ending in "eing", "eed" except past-tense regular -ed verbs that don't have a split digraph in their base, "eer", "eest").
 
 ## CRITICAL: wordSort field semantics
 
@@ -207,7 +211,8 @@ The `eg` field on each verbNoun entry is optional context shown alongside the wo
 - etymology.clicks must have exactly 6 entries.
 - morphMatrix.suffixes and morphMatrix.answers must each have exactly 6 entries.
 - spellData must have exactly one row per word in words[] order.
-- Magic-e + suffix rules above must be applied to every word, anywhere in the output.
+- Split digraph + suffix rules above must be applied to every word, anywhere in the output.
+- Never use the phrase "magic-e" or "magic e" in any field. Use "split digraph" or the specific pattern (a_e, i_e, o_e, u_e, e_e).
 """
 
 def _user_prompt(rule, words, year_group, rule_origin):
@@ -231,7 +236,9 @@ Words ({len(words)}): {", ".join(words)}{cross_year_note}
 
 Pitch ALL generated content (definitions, sentences, morphology, word sort categories, etymology depth, cloze complexity) according to the {year_group} content guidance.
 
-If any of the words above are derived from magic-e base words plus a suffix (-ed, -ing, -er, -est), make sure every reference to those words across the entire output uses the correct dropped-e spelling. Never write "bakeing", "driveing", "makeing", "smileing" or any similar form.
+If any of the words above are derived from split digraph base words plus a suffix (-ed, -ing, -er, -est), make sure every reference to those words across the entire output uses the correct dropped-e spelling. Never write "bakeing", "driveing", "makeing", "smileing" or any similar form.
+
+Never use the phrase "magic-e" or "magic e" anywhere in the output. Always use "split digraph" or the specific pattern name (a_e, i_e, o_e, u_e, e_e).
 
 Return only the JSON object."""
 
@@ -336,6 +343,31 @@ def _validate(lesson: dict, words: list):
         # Allow minor mismatch — just warn in production; here we patch silently
         lesson["words"] = words
 
+    # "magic-e" / "magic e" check — the school uses "split digraph" instead.
+    # Scan every string value anywhere in the lesson and reject if found.
+    forbidden_patterns = re.compile(r"\bmagic[\s\-]e\b", re.IGNORECASE)
+
+    def _scan_for_forbidden(node, path=""):
+        hits = []
+        if isinstance(node, str):
+            if forbidden_patterns.search(node):
+                hits.append((path or "<root>", node[:80]))
+        elif isinstance(node, dict):
+            for k, v in node.items():
+                hits.extend(_scan_for_forbidden(v, f"{path}.{k}" if path else k))
+        elif isinstance(node, list):
+            for i, item in enumerate(node):
+                hits.extend(_scan_for_forbidden(item, f"{path}[{i}]"))
+        return hits
+
+    forbidden_hits = _scan_for_forbidden(lesson)
+    if forbidden_hits:
+        details = "; ".join(f"{loc}: {snippet!r}" for loc, snippet in forbidden_hits[:5])
+        raise ValueError(
+            f"Forbidden phrase 'magic-e' / 'magic e' found in generated lesson "
+            f"(school uses 'split digraph' instead). Locations: {details}. Regenerate the lesson."
+        )
+
     # Magic-e + suffix check — applies to fields that should contain CORRECT
     # spellings. spellData distractor opts are deliberately wrong so excluded.
     bad_words = []
@@ -372,7 +404,8 @@ def _validate(lesson: dict, words: list):
     if bad_words:
         details = ", ".join(f"{loc}={w!r}" for loc, w in bad_words)
         raise ValueError(
-            f"Magic-e suffix errors detected (e dropped wrong): {details}. "
+            f"Split digraph + suffix spelling errors detected "
+            f"(e was not dropped before adding -ing/-ed/-er/-est): {details}. "
             f"Regenerate the lesson."
         )
 
@@ -435,7 +468,8 @@ Requirements:
 - Words must be appropriate in difficulty for {year_group} pupils aged {age}
 - Words should be varied — different lengths, different contexts
 - All words must be real, common English words pupils will encounter in reading
-- All words must be CORRECTLY spelt — apply standard spelling rules. For example, when adding -ing or -ed to a magic-e base word, drop the e (bake + ing = baking, not "bakeing"; drive + ed = drove or driven for past tense, not "driveing").
+- All words must be CORRECTLY spelt — apply standard spelling rules. For example, when adding -ing or -ed to a split digraph base word (one ending in vowel + consonant + e where the e makes the vowel long, like bake, drive, hope), drop the e (bake + ing = baking, not "bakeing"; drive + ed = drove or driven for past tense, not "driveing").
+- Never use the phrase "magic-e" or "magic e" — always say "split digraph".
 - Return ONLY a JSON array of {n} lowercase strings, nothing else
 - Example format: ["word1", "word2", "word3"]"""
 
