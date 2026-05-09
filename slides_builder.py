@@ -473,6 +473,127 @@ def build_slides(lesson: dict) -> bytes:
         txt(s, ws["exampleLine"], 0.5, BOX_Y + BOX_H + 0.12, 9.0, 0.30,
             size=12, color=C["BLACK"], align="center")
 
+    # ── Sound button drawing ──────────────────────────────────────────────────
+
+    def draw_sound_buttons(slide, word, cx, wy, font_size):
+        """
+        Draw sound buttons centred at cx, top at wy.
+        Letters in a no-border table; dots under single phonemes; bars under digraphs.
+        """
+        phonemes = lesson["phonemes"].get(word)
+        if not phonemes:
+            return
+
+        CELL_W = font_size / 28 * 0.40
+        ROW_H  = font_size * 1.4 / 72
+        DOT    = max(0.040, font_size * 0.084 / 28)
+        LINE_H = max(0.018, font_size * 0.046 / 28)
+        PAD    = CELL_W * 0.07
+        GAP    = 0.04
+
+        n_cells = sum(len(g["l"]) for g in phonemes)
+        total_w = n_cells * CELL_W
+        table_x = cx - total_w / 2
+        sym_y   = wy + ROW_H + GAP
+        line_y  = sym_y + (DOT - LINE_H) / 2
+
+        # Letter table — one cell per letter, no borders
+        ts = slide.shapes.add_table(
+            1, n_cells,
+            Inches(table_x), Inches(wy),
+            Inches(total_w), Inches(ROW_H)
+        )
+        tbl = ts.table
+        for ci in range(n_cells):
+            tbl.columns[ci].width = Inches(CELL_W)
+        tbl.rows[0].height = Inches(ROW_H)
+
+        ci = 0
+        for g in phonemes:
+            for ch in g["l"]:
+                cell = tbl.cell(0, ci)
+                cell.fill.solid()
+                cell.fill.fore_color.rgb = rgb(C["WHITE"])
+                tf = cell.text_frame
+                _bodyPr(tf._txBody, valign="middle", margin_in=0)
+                p = tf.paragraphs[0]
+                p.alignment = PP_ALIGN.CENTER
+                run = p.add_run()
+                run.text = ch
+                run.font.name = FONT
+                run.font.size = Pt(int(font_size))
+                run.font.bold = False
+                run.font.color.rgb = rgb(C["BLACK"])
+                # Remove all borders
+                tc = cell._tc
+                tcPr = tc.get_or_add_tcPr()
+                for edge in ('lnL', 'lnR', 'lnT', 'lnB'):
+                    ln = tcPr.find(qn(f'a:{edge}'))
+                    if ln is None:
+                        ln = etree.SubElement(tcPr, qn(f'a:{edge}'))
+                    for sf in ln.findall(qn('a:solidFill')):
+                        ln.remove(sf)
+                    if ln.find(qn('a:noFill')) is None:
+                        etree.SubElement(ln, qn('a:noFill'))
+                ci += 1
+
+        # Per-group geometry
+        col = 0
+        gd = []
+        for g in phonemes:
+            n  = len(g["l"])
+            gx = table_x + col * CELL_W
+            gw = n * CELL_W
+            gd.append({**g, "gx": gx, "gw": gw, "gc": gx + gw / 2})
+            col += n
+
+        # Digraph bars
+        for g in gd:
+            if g["t"] == "line":
+                rect(slide, g["gx"] + PAD, line_y,
+                     g["gw"] - 2 * PAD, LINE_H, C["BLACK"])
+
+        # Dots under single phonemes (not split digraphs)
+        for g in gd:
+            if g["t"] == "dot" and "sid" not in g:
+                # oval shape (type 9)
+                shape = slide.shapes.add_shape(
+                    9,  # MSO_SHAPE_TYPE.OVAL
+                    Inches(g["gc"] - DOT / 2), Inches(sym_y),
+                    Inches(DOT), Inches(DOT)
+                )
+                shape.fill.solid()
+                shape.fill.fore_color.rgb = rgb(C["BLACK"])
+                shape.line.fill.background()
+
+        # Split digraphs — draw a simple arc using a curved connector approximation
+        splits = {}
+        for g in gd:
+            if "sid" in g:
+                sid = g["sid"]
+                if sid not in splits:
+                    splits[sid] = []
+                splits[sid].append(g)
+
+        for sid, pair in splits.items():
+            if len(pair) < 2:
+                continue
+            pair.sort(key=lambda g: g["gx"])
+            x1, x2 = pair[0]["gc"], pair[-1]["gc"]
+            arc_w = x2 - x1
+            arc_h = 0.18
+            arc_x = x1
+            arc_y = sym_y - arc_h
+            # Draw as a thin rectangle arc approximation
+            shape = slide.shapes.add_shape(
+                1,  # rectangle
+                Inches(arc_x), Inches(arc_y),
+                Inches(arc_w), Inches(LINE_H)
+            )
+            shape.fill.solid()
+            shape.fill.fore_color.rgb = rgb(C["BLACK"])
+            shape.line.fill.background()
+
     # ════════════════════════════════════════════════════════════════════════
     # SLIDE 9 — Syllable & Phoneme Map (worked examples)
     # ════════════════════════════════════════════════════════════════════════
@@ -490,7 +611,8 @@ def build_slides(lesson: dict) -> bytes:
         fs = min(fit_font(w, cw, 36, 18) for w in map_words)
 
         for i, w in enumerate(map_words):
-            x = sx + i * (cw + 0.25)
+            x  = sx + i * (cw + 0.25)
+            cx = x + cw / 2
             brk = syllables.get(w, w)
             n   = sc.get(w, 1)
 
@@ -508,11 +630,7 @@ def build_slides(lesson: dict) -> bytes:
 
             txt(s, "Sound Buttons", x, sy + 1.95, cw, 0.3,
                 size=12, bold=True, color=C["PINK"], align="center")
-            # Simplified sound button representation using text
-            phonemes = lesson["phonemes"].get(w, [])
-            sb_text = " · ".join(p["l"] for p in phonemes)
-            txt(s, sb_text, x, sy + 2.32, cw, 0.5,
-                size=16, color=C["BLACK"], align="center")
+            draw_sound_buttons(s, w, cx, sy + 2.32, 22)
             txt(s, "● = single sound   — = letters making one sound",
                 x, sy + 2.88, cw, 0.22,
                 size=9, italic=True, color=C["GREY"], align="center")
@@ -562,20 +680,37 @@ def build_slides(lesson: dict) -> bytes:
             {"text": "Sound Buttons",   "bold": True, "fill": C["WHITE"], "align": "center"},
             {"text": "My Word",         "bold": True, "fill": C["WHITE"], "align": "center"},
         ]
-        rows = []
-        for w in map_words:
-            phonemes = lesson["phonemes"].get(w, [])
-            sb = " · ".join(p["l"] for p in phonemes)
-            rows.append([
-                {"text": w,                   "fill": C["WHITE"], "align": "center", "size": 18},
-                {"text": syllables.get(w, w), "fill": C["WHITE"], "align": "center", "size": 16},
-                {"text": sb,                  "fill": C["WHITE"], "align": "center", "size": 14},
-                {"text": w,                   "fill": C["WHITE"], "align": "center", "size": 18, "color": C["PINK"]},
-            ])
+        rows = [
+            [{"text": w,                   "fill": C["WHITE"], "align": "center", "size": 18},
+             {"text": syllables.get(w, w), "fill": C["WHITE"], "align": "center", "size": 16},
+             {"text": "",                  "fill": C["WHITE"]},
+             {"text": w,                   "fill": C["WHITE"], "align": "center", "size": 18, "color": C["PINK"]}]
+            for w in map_words
+        ]
         rh = [0.5] + [0.57] * len(rows)
-        table(s, [hdr] + rows,
-              0.35, CONT_Y + 0.1, 9.3, CONT_H - 0.15,
-              [2.0, 2.5, 2.9, 1.9], rh)
+        ts = table(s, [hdr] + rows,
+                   0.35, CONT_Y + 0.1, 9.3, CONT_H - 0.15,
+                   [2.0, 2.5, 2.9, 1.9], rh)
+
+        # Draw sound buttons over the Sound Buttons column (col index 2)
+        TABLE_X   = 0.35
+        SB_COL_X  = TABLE_X + 2.0 + 2.5   # 4.85"
+        SB_COL_W  = 2.9
+        HDR_H_IN  = 0.5
+        ROW_H_IN  = 0.57
+        SB_FS     = 13
+
+        for ri, w in enumerate(map_words):
+            cell_top_y = CONT_Y + 0.1 + HDR_H_IN + ri * ROW_H_IN
+            cell_cx    = SB_COL_X + SB_COL_W / 2
+
+            # Estimate height of sound button display to centre it
+            row_h_sb   = SB_FS * 1.4 / 72
+            dot_h      = max(0.040, SB_FS * 0.084 / 28)
+            total_sb_h = row_h_sb + 0.04 + dot_h
+            word_top_y = cell_top_y + (ROW_H_IN - total_sb_h) / 2
+
+            draw_sound_buttons(s, w, cell_cx, word_top_y, SB_FS)
 
     # ════════════════════════════════════════════════════════════════════════
     # SLIDE 12 — Definitions and In a Sentence (blank)
