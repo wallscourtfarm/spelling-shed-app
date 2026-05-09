@@ -52,6 +52,122 @@ def build_slides(lesson: dict) -> bytes:
     prs.slide_height = Inches(SH)
     BLANK = prs.slide_layouts[6]
 
+    # Animation registry: list of (slide, click_groups) tuples. Each click_groups
+    # entry is a list of shape lists; shapes in the same inner list reveal together
+    # on a single click. Shapes are initially hidden via "Appear" entrance effect.
+    slide_animations = []
+
+    def register_clicks(slide, *click_groups):
+        """Register click-reveal animations for this slide.
+        Each argument is a list of shapes (or a single shape) to reveal on one click.
+        Empty lists and None values are skipped."""
+        groups = []
+        for cg in click_groups:
+            if cg is None:
+                continue
+            if not isinstance(cg, (list, tuple)):
+                cg = [cg]
+            cg = [s for s in cg if s is not None]
+            if cg:
+                groups.append(cg)
+        if groups:
+            slide_animations.append((slide, groups))
+
+    def inject_click_animations():
+        """Walk the animation registry and inject p:timing + p:bldLst onto each
+        registered slide. Matches the structure produced by the existing
+        spelling-shed skill: nested p:par groups, click-trigger first effect,
+        then with-effect siblings, all using presetID=1 presetClass=entr (Appear)."""
+        P = "http://schemas.openxmlformats.org/presentationml/2006/main"
+        A = "http://schemas.openxmlformats.org/drawingml/2006/main"
+        nsmap = {"p": P, "a": A}
+
+        def Pe(parent, tag, **attrs):
+            el = etree.SubElement(parent, "{%s}%s" % (P, tag))
+            for k, v in attrs.items():
+                el.set(k, str(v))
+            return el
+
+        for slide, click_groups in slide_animations:
+            sld = slide._element
+            # Strip any existing timing/bldLst (idempotent)
+            for tag in ("timing", "bldLst"):
+                existing = sld.find("{%s}%s" % (P, tag))
+                if existing is not None:
+                    sld.remove(existing)
+
+            timing = etree.SubElement(sld, "{%s}timing" % P, nsmap=nsmap)
+            tnLst = Pe(timing, "tnLst")
+            root_par = Pe(tnLst, "par")
+            root_cTn = Pe(root_par, "cTn", id="1", dur="indefinite",
+                          restart="whenNotActive", nodeType="tmRoot")
+            root_children = Pe(root_cTn, "childTnLst")
+            seq = Pe(root_children, "seq", concurrent="1", nextAc="seek")
+            seq_cTn = Pe(seq, "cTn", id="2", dur="indefinite", nodeType="mainSeq")
+            seq_children = Pe(seq_cTn, "childTnLst")
+
+            cid = 3
+            all_spids = []
+
+            for group in click_groups:
+                click_par = Pe(seq_children, "par")
+                click_cTn = Pe(click_par, "cTn", id=str(cid), fill="hold")
+                cid += 1
+                stCondLst = Pe(click_cTn, "stCondLst")
+                Pe(stCondLst, "cond", delay="indefinite")
+                click_children = Pe(click_cTn, "childTnLst")
+
+                inner_par = Pe(click_children, "par")
+                inner_cTn = Pe(inner_par, "cTn", id=str(cid), fill="hold")
+                cid += 1
+                inner_stCond = Pe(inner_cTn, "stCondLst")
+                Pe(inner_stCond, "cond", delay="0")
+                inner_children = Pe(inner_cTn, "childTnLst")
+
+                for shape_index, shape in enumerate(group):
+                    spid = shape.shape_id
+                    all_spids.append(spid)
+                    node_type = "clickEffect" if shape_index == 0 else "withEffect"
+
+                    effect_par = Pe(inner_children, "par")
+                    effect_cTn = Pe(effect_par, "cTn", id=str(cid),
+                                    presetID="1", presetClass="entr",
+                                    presetSubtype="0", fill="hold",
+                                    grpId="0", nodeType=node_type)
+                    cid += 1
+                    es_stCond = Pe(effect_cTn, "stCondLst")
+                    Pe(es_stCond, "cond", delay="0")
+                    e_children = Pe(effect_cTn, "childTnLst")
+
+                    set_el = Pe(e_children, "set")
+                    cBhvr = Pe(set_el, "cBhvr")
+                    bhvr_cTn = Pe(cBhvr, "cTn", id=str(cid), dur="1", fill="hold")
+                    cid += 1
+                    bhvr_stCond = Pe(bhvr_cTn, "stCondLst")
+                    Pe(bhvr_stCond, "cond", delay="0")
+                    tgtEl = Pe(cBhvr, "tgtEl")
+                    Pe(tgtEl, "spTgt", spid=str(spid))
+                    attrNameLst = Pe(cBhvr, "attrNameLst")
+                    attrName = etree.SubElement(attrNameLst, "{%s}attrName" % P)
+                    attrName.text = "style.visibility"
+                    to_el = Pe(set_el, "to")
+                    Pe(to_el, "strVal", val="visible")
+
+            bldLst = etree.SubElement(sld, "{%s}bldLst" % P, nsmap=nsmap)
+            for spid in all_spids:
+                Pe(bldLst, "bldP", spid=str(spid), grpId="0", animBg="1")
+
+            # Append navigation conditions inside <seq> (after mainSeq cTn) so the
+            # arrow keys / click anywhere advance the animation. Matches reference.
+            prevCondLst = Pe(seq, "prevCondLst")
+            prev_cond = Pe(prevCondLst, "cond", evt="onPrev", delay="0")
+            prev_tgt = Pe(prev_cond, "tgtEl")
+            Pe(prev_tgt, "sldTgt")
+            nextCondLst = Pe(seq, "nextCondLst")
+            next_cond = Pe(nextCondLst, "cond", evt="onNext", delay="0")
+            next_tgt = Pe(next_cond, "tgtEl")
+            Pe(next_tgt, "sldTgt")
+
     # ── Core drawing helpers ──────────────────────────────────────────────────
 
     def _bodyPr(txBody, valign="middle", margin_in=0.05):
@@ -291,26 +407,32 @@ def build_slides(lesson: dict) -> bytes:
 
         fs = max(14, min(28, int((cell_w * 72) / (max(len(w) for w in answers) * 0.54))))
 
+        click_groups = []
         for i, (word, ans) in enumerate(zip(starters, answers)):
             col, row = i % 3, i // 3
             x = sx + col * cell_w
             y = sy + row * (PAIR_H + row_gap)
             txt(s, word + "  →", x, y, cell_w, BASE_H,
                 size=fs, color=C["BLACK"], align="center")
-            txt(s, ans, x, y + BASE_H, cell_w, ANS_H,
+            ans_shape = txt(s, ans, x, y + BASE_H, cell_w, ANS_H,
                 size=fs, bold=True, color=C["PINK"], align="center")
             note = lesson["starter"].get("perPairNote", "")
-            txt(s, note, x, y + BASE_H + ANS_H, cell_w, RULE_H,
+            note_shape = txt(s, note, x, y + BASE_H + ANS_H, cell_w, RULE_H,
                 size=11, italic=True, color=C["GREY"], align="center")
+            click_groups.append([ans_shape, note_shape])
 
         rule_y = sy + 2 * (PAIR_H + row_gap) + 0.14
-        rect(s, 0.5, rule_y, 9.0, 0.9, "FFF9C4", C["YELLOW"], 1.5)
-        txt(s, lesson["starter"]["ruleBox"], 0.5, rule_y + 0.04, 9.0, 0.32,
+        rule_box_shape = rect(s, 0.5, rule_y, 9.0, 0.9, "FFF9C4", C["YELLOW"], 1.5)
+        rule_title_shape = txt(s, lesson["starter"]["ruleBox"], 0.5, rule_y + 0.04, 9.0, 0.32,
             size=15, bold=True, color=C["BLACK"], align="center", margin=0)
         rule_text = lesson["starter"].get("ruleText", "")
+        rule_text_shape = None
         if rule_text:
-            txt(s, rule_text, 0.7, rule_y + 0.36, 8.6, 0.5,
+            rule_text_shape = txt(s, rule_text, 0.7, rule_y + 0.36, 8.6, 0.5,
                 size=12, color=C["BLACK"], align="center", margin=0)
+        click_groups.append([rule_box_shape, rule_title_shape, rule_text_shape])
+
+        register_clicks(s, *click_groups)
 
     # ════════════════════════════════════════════════════════════════════════
     # SLIDE 4 — This Week's Words
@@ -322,22 +444,25 @@ def build_slides(lesson: dict) -> bytes:
                   lesson["thisWeeksWordsQ"], f"{CODE}.3")
 
         cell_w = 9.0 / 5
-        # draw_sound_buttons cell width = font/28 * 0.40 per letter; fit longest word
-        max_chars = max(len(w) for w in WORDS)
-        fs = int(min(22, cell_w * 0.85 * 28 / (max_chars * 0.40)))
+        fs = min(fit_font(w, cell_w, 32, 18) for w in WORDS)
 
         for ri, row_words in enumerate([WORDS[:5], WORDS[5:]]):
             for ci, w in enumerate(row_words):
-                cx = 0.5 + ci * cell_w + cell_w / 2
-                wy = CONT_Y + 0.45 + ri * 1.30
-                draw_sound_buttons(s, w, cx, wy, fs)
+                x = 0.5 + ci * cell_w
+                y = CONT_Y + 0.3 + ri * 1.30
+                txt(s, w, x, y, cell_w, 0.85,
+                    size=fs, color=C["BLACK"], align="center", valign="bottom")
+                # Pink underline bar centred under the word
+                bar_w = cell_w - 0.6
+                rect(s, x + 0.3, y + 0.92, bar_w, 0.06, C["PINK"])
 
-        txt(s, lesson["thisWeeksWordsPrompt"],
+        prompt_shape = txt(s, lesson["thisWeeksWordsPrompt"],
             0.5, CONT_Y + 3.05, 4.3, 0.4,
             size=15, bold=True, color=C["BLUE"], align="left")
-        txt(s, lesson["thisWeeksWordsExplanation"],
+        explanation_shape = txt(s, lesson["thisWeeksWordsExplanation"],
             4.8, CONT_Y + 3.05, 4.8, 0.55,
             size=14, color=C["BLACK"], align="left")
+        register_clicks(s, prompt_shape, explanation_shape)
 
     # ════════════════════════════════════════════════════════════════════════
     # SLIDE 5 — Etymology
@@ -349,38 +474,50 @@ def build_slides(lesson: dict) -> bytes:
                   "Which of this week's words is this?", f"{CODE}.4")
 
         etym = lesson["etymology"]
-        txt(s, etym["word"], 1.0, CONT_Y + 0.1, 8.0, 0.85,
+        word_shape = txt(s, etym["word"], 1.0, CONT_Y + 0.1, 8.0, 0.85,
             size=60, color=C["PINK"], align="center")
 
+        card_groups = []
         bw = 2.85
         for i, click in enumerate(etym["clicks"][:3]):
             x = 0.5 + i * (bw + 0.15)
-            rect(s, x, CONT_Y + 1.1, bw, 1.35, C["WHITE"], C["PINK"], 2)
-            txt(s, click["label"] + " — " + click["body"],
+            box_shape = rect(s, x, CONT_Y + 1.1, bw, 1.35, C["WHITE"], C["PINK"], 2)
+            text_shape = txt(s, click["label"] + " — " + click["body"],
                 x + 0.12, CONT_Y + 1.15, bw - 0.24, 1.25,
                 size=13, color=C["BLACK"], align="center")
+            card_groups.append([box_shape, text_shape])
 
-        txt(s, etym["baseForm"], 1.25, CONT_Y + 2.55, 2.5, 0.40,
+        base_word_shape = txt(s, etym["baseForm"], 1.25, CONT_Y + 2.55, 2.5, 0.40,
             size=26, color=C["BLUE"], align="center")
-        txt(s, "↙                          ↘",
+        arrows_shape = txt(s, "↙                          ↘",
             1.25, CONT_Y + 2.95, 2.5, 0.22,
             size=14, color=C["BLACK"], align="center")
 
+        sub3_shape = sub4_shape = None
         if len(etym["clicks"]) > 3:
-            txt(s, etym["clicks"][3]["label"] + ":\n" + etym["clicks"][3]["body"],
+            sub3_shape = txt(s, etym["clicks"][3]["label"] + ":\n" + etym["clicks"][3]["body"],
                 0.3, CONT_Y + 3.19, 2.1, 0.84,
                 size=10, color=C["GREY"], align="center")
         if len(etym["clicks"]) > 4:
-            txt(s, etym["clicks"][4]["label"] + ":\n" + etym["clicks"][4]["body"],
+            sub4_shape = txt(s, etym["clicks"][4]["label"] + ":\n" + etym["clicks"][4]["body"],
                 2.6, CONT_Y + 3.19, 2.4, 0.84,
                 size=10, color=C["GREY"], align="center")
+
+        right_label_shape = right_body_shape = None
         if len(etym["clicks"]) > 5:
-            txt(s, etym["clicks"][5]["label"] + ":",
+            right_label_shape = txt(s, etym["clicks"][5]["label"] + ":",
                 5.2, CONT_Y + 2.55, 4.3, 0.38,
                 size=14, color=C["BLACK"], align="left")
-            txt(s, etym["clicks"][5]["body"],
+            right_body_shape = txt(s, etym["clicks"][5]["body"],
                 5.2, CONT_Y + 2.95, 4.3, 1.0,
                 size=11, color=C["BLACK"], align="left", valign="top")
+
+        register_clicks(s,
+            *card_groups,
+            word_shape,
+            [base_word_shape, arrows_shape, sub3_shape, sub4_shape],
+            [right_label_shape, right_body_shape],
+        )
 
     # ════════════════════════════════════════════════════════════════════════
     # SLIDE 6 — Syllable Count
@@ -396,6 +533,7 @@ def build_slides(lesson: dict) -> bytes:
         sc = lesson["syllableCounts"]
         fs = min(fit_font(w, cell_w, 28, 14) for w in WORDS)
 
+        click_shapes = []
         for i, w in enumerate(WORDS):
             col, row = i % 5, i // 5
             x = sx + col * cell_w
@@ -404,15 +542,18 @@ def build_slides(lesson: dict) -> bytes:
             txt(s, w, x, y, cell_w, 0.8,
                 size=fs, color=C["BLACK"], align="center")
             num_col = C["RED"] if n == 1 else "388E3C"
-            txt(s, str(n), x, y + 0.82, cell_w, 0.42,
+            num_shape = txt(s, str(n), x, y + 0.82, cell_w, 0.42,
                 size=26, bold=True, color=num_col, align="center")
-            txt(s, "syllable" if n == 1 else "syllables",
+            label_shape = txt(s, "syllable" if n == 1 else "syllables",
                 x, y + 1.24, cell_w, 0.26,
                 size=11, color=C["GREY"], align="center")
+            click_shapes.extend([num_shape, label_shape])
 
         txt(s, "Does the length of the word affect the number of syllables it has?",
             0.5, BAR_Y - 0.48, 9.0, 0.35,
             size=13, italic=True, color=C["GREY"], align="center")
+
+        register_clicks(s, click_shapes)
 
     # ════════════════════════════════════════════════════════════════════════
     # SLIDE 7 — Word Sort (blank)
@@ -495,6 +636,86 @@ def build_slides(lesson: dict) -> bytes:
 
     # ── Sound button drawing ──────────────────────────────────────────────────
 
+    def _draw_bezier_arc(slide, x1, y1, x2, y2, peak_y, line_w):
+        """
+        Draw a smooth arc from (x1,y1) up to peak (centre, peak_y) down to (x2,y2)
+        as a freeform shape with a quadratic Bezier curve. All coords in inches.
+        """
+        EMU = 914400
+        # Compute control point first so we can include it in the bounding box
+        cx = (x1 + x2) / 2
+        mid_y = (y1 + y2) / 2
+        cy = 2 * peak_y - mid_y
+
+        # Bounding box: encompasses both endpoints, peak AND control point
+        bx_min = min(x1, x2, cx)
+        bx_max = max(x1, x2, cx)
+        by_min = min(y1, y2, peak_y, cy)
+        by_max = max(y1, y2, peak_y, cy)
+        box_x = bx_min
+        box_y = by_min
+        box_w = max(bx_max - bx_min, 0.001)
+        box_h = max(by_max - by_min, 0.001)
+
+        # Coordinates inside the path are 0..21600 (drawingML default path coord space)
+        path_max = 21600
+        def to_path_x(x):
+            return int((x - box_x) / box_w * path_max) if box_w > 0 else 0
+        def to_path_y(y):
+            return int((y - box_y) / box_h * path_max) if box_h > 0 else 0
+
+        sp = etree.SubElement(slide.shapes._spTree, qn('p:sp'))
+        nvSpPr = etree.SubElement(sp, qn('p:nvSpPr'))
+        cNvPr = etree.SubElement(nvSpPr, qn('p:cNvPr'))
+        cNvPr.set('id', str(slide.shapes._next_shape_id))
+        cNvPr.set('name', 'BezierArc')
+        etree.SubElement(nvSpPr, qn('p:cNvSpPr'))
+        etree.SubElement(nvSpPr, qn('p:nvPr'))
+        spPr = etree.SubElement(sp, qn('p:spPr'))
+
+        xfrm = etree.SubElement(spPr, qn('a:xfrm'))
+        off = etree.SubElement(xfrm, qn('a:off'))
+        off.set('x', str(int(box_x * EMU)))
+        off.set('y', str(int(box_y * EMU)))
+        ext = etree.SubElement(xfrm, qn('a:ext'))
+        ext.set('cx', str(int(box_w * EMU)))
+        ext.set('cy', str(int(box_h * EMU)))
+
+        custGeom = etree.SubElement(spPr, qn('a:custGeom'))
+        etree.SubElement(custGeom, qn('a:avLst'))
+        etree.SubElement(custGeom, qn('a:gdLst'))
+        etree.SubElement(custGeom, qn('a:ahLst'))
+        etree.SubElement(custGeom, qn('a:cxnLst'))
+        etree.SubElement(custGeom, qn('a:rect')).attrib.update(
+            {'l': '0', 't': '0', 'r': str(path_max), 'b': str(path_max)})
+
+        pathLst = etree.SubElement(custGeom, qn('a:pathLst'))
+        path = etree.SubElement(pathLst, qn('a:path'))
+        path.set('w', str(path_max))
+        path.set('h', str(path_max))
+
+        moveTo = etree.SubElement(path, qn('a:moveTo'))
+        pt = etree.SubElement(moveTo, qn('a:pt'))
+        pt.set('x', str(to_path_x(x1)))
+        pt.set('y', str(to_path_y(y1)))
+
+        quadBezTo = etree.SubElement(path, qn('a:quadBezTo'))
+        ctrl = etree.SubElement(quadBezTo, qn('a:pt'))
+        ctrl.set('x', str(to_path_x(cx)))
+        ctrl.set('y', str(to_path_y(cy)))
+        end = etree.SubElement(quadBezTo, qn('a:pt'))
+        end.set('x', str(to_path_x(x2)))
+        end.set('y', str(to_path_y(y2)))
+
+        # No fill, black stroke
+        noFill = etree.SubElement(spPr, qn('a:noFill'))
+        ln = etree.SubElement(spPr, qn('a:ln'))
+        ln.set('w', str(int(line_w * 12700)))  # EMU per pt
+        ln.set('cap', 'rnd')
+        solidFill = etree.SubElement(ln, qn('a:solidFill'))
+        clr = etree.SubElement(solidFill, qn('a:srgbClr'))
+        clr.set('val', C["BLACK"])
+
     def draw_sound_buttons(slide, word, cx, wy, font_size):
         """
         Draw sound buttons centred at cx, top at wy.
@@ -504,7 +725,10 @@ def build_slides(lesson: dict) -> bytes:
         if not phonemes:
             return
 
-        CELL_W = font_size / 28 * 0.40
+        # CELL_W per letter. At small fonts (~13pt) the linear formula leaves no
+        # room for letter glyphs once cell margins are stripped, so use a slightly
+        # generous floor that scales with point size.
+        CELL_W = max(font_size / 28 * 0.40, font_size * 0.018)
         ROW_H  = font_size * 1.4 / 72
         DOT    = max(0.040, font_size * 0.084 / 28)
         LINE_H = max(0.018, font_size * 0.046 / 28)
@@ -534,6 +758,15 @@ def build_slides(lesson: dict) -> bytes:
                 cell = tbl.cell(0, ci)
                 # Transparent fill so shapes drawn below are visible
                 cell.fill.background()
+                # Zero cell insets so the letter is centred in its full cell width.
+                # Default OOXML insets (marL/marR/marT/marB) are 91440 EMU (0.1") and
+                # at small font sizes leave no room for the letter, causing drift.
+                tc = cell._tc
+                tcPr = tc.get_or_add_tcPr()
+                tcPr.set('marL', '0')
+                tcPr.set('marR', '0')
+                tcPr.set('marT', '0')
+                tcPr.set('marB', '0')
                 tf = cell.text_frame
                 _bodyPr(tf._txBody, valign="middle", margin_in=0)
                 p = tf.paragraphs[0]
@@ -545,8 +778,6 @@ def build_slides(lesson: dict) -> bytes:
                 run.font.bold = False
                 run.font.color.rgb = rgb(C["BLACK"])
                 # Remove all borders
-                tc = cell._tc
-                tcPr = tc.get_or_add_tcPr()
                 for edge in ('lnL', 'lnR', 'lnT', 'lnB'):
                     ln = tcPr.find(qn(f'a:{edge}'))
                     if ln is None:
@@ -573,10 +804,10 @@ def build_slides(lesson: dict) -> bytes:
                 rect(slide, g["gx"] + PAD, line_y,
                      g["gw"] - 2 * PAD, LINE_H, C["BLACK"])
 
-        # Dots under single phonemes (not split digraphs)
+        # Dots under single phonemes only.
+        # Split digraph members get NO dot — the arc replaces the dots entirely.
         for g in gd:
             if g["t"] == "dot" and "sid" not in g:
-                # oval shape (type 9)
                 shape = slide.shapes.add_shape(
                     9,  # MSO_SHAPE_TYPE.OVAL
                     Inches(g["gc"] - DOT / 2), Inches(sym_y),
@@ -586,33 +817,27 @@ def build_slides(lesson: dict) -> bytes:
                 shape.fill.fore_color.rgb = rgb(C["BLACK"])
                 shape.line.fill.background()
 
-        # Split digraphs — draw a simple arc using a curved connector approximation
+        # Split digraphs — draw a Bezier arc above the letters joining the two members.
+        # No dots under either member; the arc replaces them.
         splits = {}
         for g in gd:
             if "sid" in g:
                 sid = g["sid"]
-                if sid not in splits:
-                    splits[sid] = []
-                splits[sid].append(g)
+                splits.setdefault(sid, []).append(g)
 
         for sid, pair in splits.items():
             if len(pair) < 2:
                 continue
             pair.sort(key=lambda g: g["gx"])
             x1, x2 = pair[0]["gc"], pair[-1]["gc"]
-            arc_w = x2 - x1
-            arc_h = 0.18
-            arc_x = x1
-            arc_y = sym_y - arc_h
-            # Draw as a thin rectangle arc approximation
-            shape = slide.shapes.add_shape(
-                1,  # rectangle
-                Inches(arc_x), Inches(arc_y),
-                Inches(arc_w), Inches(LINE_H)
-            )
-            shape.fill.solid()
-            shape.fill.fore_color.rgb = rgb(C["BLACK"])
-            shape.line.fill.background()
+            # Arc depth scaled to font size but capped to avoid crashing into
+            # surrounding content (legends, table cell borders, etc).
+            arc_h = min(0.14, max(0.08, font_size * 0.005))
+            base_y = sym_y + DOT * 0.5
+            peak_y = base_y + arc_h
+            line_w = max(1.0, font_size * 0.05)
+
+            _draw_bezier_arc(slide, x1, base_y, x2, base_y, peak_y, line_w)
 
     # ════════════════════════════════════════════════════════════════════════
     # SLIDE 9 — Syllable & Phoneme Map (worked examples)
@@ -1015,6 +1240,9 @@ def build_slides(lesson: dict) -> bytes:
     slide1();  slide2();  slide3();  slide4();  slide5();  slide6();  slide7()
     slide8();  slide9();  slide10(); slide11(); slide12(); slide13(); slide14()
     slide15(); slide16(); slide17(); slide18(); slide19(); slide20(); slide21()
+
+    # Apply click-reveal animations to registered slides
+    inject_click_animations()
 
     buf = io.BytesIO()
     prs.save(buf)
