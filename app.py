@@ -12,13 +12,20 @@ from worksheets_builder import build_worksheets
 from slides_builder import build_slides
 
 st.set_page_config(
-    page_title="Spelling Shed Lesson Generator",
+    page_title="Spelling Lesson Generator",
     page_icon="📝",
     layout="centered"
 )
 
-st.title("Spelling Shed Lesson Generator")
-st.caption("Wallscourt Farm Academy — EdShed-style lesson resources")
+col_logo, col_title = st.columns([1, 3])
+with col_logo:
+    try:
+        st.image("assets/wfa_logo.jpg", width=160)
+    except Exception:
+        pass
+with col_title:
+    st.title("Spelling Lesson Generator")
+    st.markdown("**Wallscourt Farm Academy**")
 
 # ── Persistent state ──────────────────────────────────────────────────────────
 
