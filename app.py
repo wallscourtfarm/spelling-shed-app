@@ -7,6 +7,8 @@ import streamlit as st
 import json
 import io
 import zipfile
+import base64
+from pathlib import Path
 from content_generator import generate_lesson_json, suggest_words
 from worksheets_builder import build_worksheets
 from slides_builder import build_slides
@@ -17,15 +19,31 @@ st.set_page_config(
     layout="centered"
 )
 
-col_logo, col_title = st.columns([1, 3])
-with col_logo:
-    try:
-        st.image("assets/wfa_logo.jpg", width=160)
-    except Exception:
-        pass
-with col_title:
-    st.title("Spelling Lesson Generator")
-    st.markdown("**Wallscourt Farm Academy**")
+# ── Logo helper — embeds as base64 so no fullscreen-on-hover behaviour ────────
+def _logo_html() -> str:
+    """Return an <img> data URI for the school logo, or empty string if missing."""
+    for filename, mime in [("wfa_logo.webp", "image/webp"), ("wfa_logo.png", "image/png")]:
+        p = Path("assets") / filename
+        if p.exists():
+            b64 = base64.b64encode(p.read_bytes()).decode()
+            return f'<img src="data:{mime};base64,{b64}" style="width:180px;height:auto;display:block">'
+    return ""
+
+logo = _logo_html()
+
+st.markdown(f"""
+<div style="display:flex;align-items:center;gap:24px;padding-bottom:12px;
+            border-bottom:1px solid #e5e5e5;margin-bottom:16px">
+    {logo}
+    <div>
+        <h1 style="margin:0;padding:0;font-size:1.9rem;line-height:1.2;
+                   font-weight:700;color:#1a1a1a">Spelling Lesson Generator</h1>
+        <p style="margin:4px 0 0 0;padding:0;color:#555;font-size:1rem">
+            Wallscourt Farm Academy
+        </p>
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
 # ── Persistent state ──────────────────────────────────────────────────────────
 
