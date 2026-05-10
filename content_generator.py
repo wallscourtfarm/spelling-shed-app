@@ -34,75 +34,62 @@ You must follow the JSON schema exactly and generate every field. Return ONLY va
 ## JSON Schema
 
 {
-  "rule":   string,        // Full rule name
-  "stage":  string,        // e.g. "Stage 4"
-  "code":   string,        // 2-3 letter code from the rule (ILY, DC, SL, SLK, TRE etc.)
-
-  "words": [string],       // Exactly the words provided — do not add or remove any
-
+  "rule": string,             // Full rule name
+  "stage": string,            // e.g. "Stage 4"
+  "code": string,             // 2-3 letter code from the rule (ILY, DC, SL, SLK, TRE etc.)
+  "words": [string],          // Exactly the words provided — do not add or remove any
   "phonemes": {
     "<word>": [ {"l":"<letters>", "t":"dot|line"} | {"l":"<letters>", "t":"dot", "sid":N} ]
     // One entry per word. See phoneme rules below.
   },
-
-  "defs": { "<word>": string },       // One definition per word
-
-  "sentences": { "<word>": string },  // One COMPLETE sentence per word. The target word appears exactly once as a real word — NEVER use blanks or underscores. The builder inserts blanks automatically. Good: "The brave knight rode into battle." Bad: "The brave _____ rode into battle."
-
+  "defs": { "<word>": string },        // One definition per word
+  "sentences": { "<word>": string },   // One COMPLETE sentence per word. The target word appears exactly once as a real word — NEVER use blanks or underscores. The builder inserts blanks automatically. Good: "The brave knight rode into battle." Bad: "The brave _____ rode into battle."
   "wordMaps": {
-    "words": [string],     // 6 of the words — pick those that best illustrate the rule
+    "words": [string],        // 6 of the words — pick those that best illustrate the rule
     "syllables": { "<word>": string }  // Syllable breaks for each wordMaps word e.g. "hap | pi | ly"
   },
-
   "syllableCounts": { "<word>": number },   // All words
-
   "syllableBreaks": { "<word>": string },   // All words, " | " separator
-
   "starter": {
     "question": string,
-    "words": [string],       // Exactly 6 base forms
-    "answers": [string],     // Exactly 6 answers matching starter.words
-    "answerLabel": string,   // e.g. "adverb:" or "word:"
-    "perPairNote": string,   // Empty string if not needed
+    "words": [string],        // Exactly 6 base forms
+    "answers": [string],      // Exactly 6 answers matching starter.words
+    "answerLabel": string,    // e.g. "adverb:" or "word:"
+    "perPairNote": string,    // Empty string if not needed
     "ruleBox": string,
     "ruleText": string
   },
-
   "thisWeeksWordsQ": string,
   "thisWeeksWordsPrompt": string,
   "thisWeeksWordsExplanation": string,
-
   "wordSortQ": string,
   "wordSort": {
-    "box1label": string,    // Label for first sort category (e.g. "a_e pattern", "verb only", "1 syllable")
-    "box1sub":   string,    // Optional sub-text under box1label
-    "box2label": string,    // Label for second sort category
-    "box2sub":   string,    // Optional sub-text under box2label
-    "hint":      string,
-    "answerNote":  string,
+    "box1label": string,      // Label for first sort category (e.g. "a_e pattern", "verb only", "1 syllable")
+    "box1sub": string,        // Optional sub-text under box1label
+    "box2label": string,      // Label for second sort category
+    "box2sub": string,        // Optional sub-text under box2label
+    "hint": string,
+    "answerNote": string,
     "exampleLine": string,
-    "verbOnly":  [string],   // Words belonging in BOX 1 (despite the legacy name).
+    "verbOnly": [string],     // Words belonging in BOX 1 (despite the legacy name).
                               // The contents must match box1label's sort criterion,
                               // NOT literally "verb-only" words. The field name is a
                               // historical label and means "the first sort group".
-    "verbNoun":  [ {"word": string, "eg": string} ]
+    "verbNoun": [ {"word": string, "eg": string} ]
                               // Words belonging in BOX 2 (despite the legacy name).
                               // The contents must match box2label's sort criterion.
                               // "eg" is a short example/note shown alongside each word
                               // (can be a sample sentence, alternative form, or note).
-    // verbOnly + all verbNoun[].word must equal all words exactly
+                              // verbOnly + all verbNoun[].word must equal all words exactly
   },
-
   "spellData": [
     {"opts": [string, string, string], "correct": 0|1|2}
     // Exactly one row per word, in words[] order
   ],
-
-  "clozeOrder": [string],  // All words shuffled — no word in same position as words[]
-
+  "clozeOrder": [string],     // All words shuffled — no word in same position as words[]
   "etymology": {
-    "word":     string,        // The target word the children should guess
-    "baseForm": string,        // Base form of the target word (e.g. "race" for "racing")
+    "word": string,           // The target word the children should guess
+    "baseForm": string,       // Base form of the target word (e.g. "race" for "racing")
     "clicks": [ {"label": string, "body": string} ]
     // Exactly 6 stages, ordered OLDEST origin → MOST RECENT.
     // Card 1 = the most ancient or distant root (Proto-Indo-European, Latin, Greek, Old Norse, Celtic etc.)
@@ -117,27 +104,27 @@ You must follow the JSON schema exactly and generate every field. Return ONLY va
     // Cards 4, 5 and 6 appear after the answer is revealed, so THESE may freely
     // mention the target word — they are the "now you know" follow-up notes.
   },
-
   "wordShed": {
-    "baseWord":   string,
-    "def":        string,
-    "sentence":   string,
-    "rhymes":     string,
+    "baseWord": string,
+    "def": string,
+    "sentence": string,
+    "rhymes": string,
     "morphology": string
   },
-
   "morphMatrix": {
     "baseWord": string,       // Different from wordShed.baseWord
-    "def":      string,
+    "def": string,
     "suffixes": [string],     // Exactly 6
-    "answers":  [string]      // Exactly 6, same order
+    "answers": [string]       // Exactly 6, same order
   }
 }
 
 ## Phoneme Rules
+
 """ + PHONEME_RULES + """
 
 ## Year Group Content Guidance
+
 """ + YEAR_GROUP_GUIDANCE + """
 
 ## CRITICAL: never use the phrase "magic-e" or "magic e"
@@ -149,7 +136,6 @@ The phrase "magic-e" must never appear in any field of the output. The school do
 When the user-provided word list contains words built from a split digraph base word (one ending in vowel + consonant + e where the e makes the vowel long, e.g. bake, drive, hope) with -ed, -ing, -er or -est added, you MUST apply the correct spelling rules. Many earlier outputs have produced wrong forms like "bakeing", "driveing", "makeing", "smileing". These are spelling errors and must never appear in any field of the output (words, starter.answers, sentences, defs, spellData.opts, clozeOrder, wordShed, morphMatrix, etymology, syllableBreaks).
 
 The rules:
-
 1. Split digraph base + ING → DROP the e, then add ing.
    - bake + ing → baking (NOT "bakeing")
    - drive + ing → driving (NOT "driveing")
@@ -186,19 +172,15 @@ The wordSort fields `verbOnly` and `verbNoun` are LEGACY NAMES from when the onl
 You must populate `verbOnly` and `verbNoun` based on the SORT CRITERION you defined in `box1label` and `box2label`. These should reflect the spelling rule being taught, not part of speech.
 
 Examples of correct sorts for different lessons:
-
 * Split digraph patterns (a_e vs i_e/o_e):
   - box1label="a_e pattern", verbOnly=["danced","baked","saved","shared","placed","glared"]
   - box2label="i_e or o_e pattern", verbNoun=[{"word":"smiled","eg":""},{"word":"hoped","eg":""},{"word":"prized","eg":""}]
-
 * Syllable count (1 vs 2):
   - box1label="1 syllable", verbOnly=["tried","cried","dried"]
   - box2label="2 syllables", verbNoun=[{"word":"carried","eg":""},...]
-
 * Suffix type (-ed vs -ing):
   - box1label="-ed words", verbOnly=["hoped","baked","skated","moved"]
   - box2label="-ing words", verbNoun=[{"word":"hiking","eg":""},...]
-
 * Word class (verb only vs verb that can be noun) — only when the rule is grammatical:
   - box1label="verb only", verbOnly=["tried","dried","cried"]
   - box2label="verb or noun", verbNoun=[{"word":"carried","eg":"She carried the books (verb)"},...]
@@ -232,11 +214,78 @@ Example of GOOD etymology for target "racing" (baseForm "race"):
   click 6: "Did you know? The same Old Norse root gave us 'rush' too."
 
 Example of BAD etymology (DO NOT do this):
-  click 1: "Modern English — the word 'racing' comes from the verb 'race'..."  ← reveals answer in card 1
-  click 2: "Old French — race meaning..."  ← reveals answer
-  click 3: "Old Norse — ..."  ← order is reversed (most recent first)
+  click 1: "Modern English — the word 'racing' comes from the verb 'race'..." ← reveals answer in card 1
+  click 2: "Old French — race meaning..." ← reveals answer
+  click 3: "Old Norse — ..." ← order is reversed (most recent first)
+
+## Y2 Additional Fields
+
+If the TEACHING year group is Y2, also generate these additional fields in the JSON object.
+These are in addition to all the standard fields above (which must still be generated in full).
+
+"y2Starter": {
+  "question": string,        // Starter instruction on the slide, Y2-appropriate language
+  "clues": [                 // Exactly 6 objects — one per last-week word (make plausible neighbours of this rule)
+    {"word": string, "clue": string}
+    // word: one of last week's words; clue: 1-2 simple sentences a Y2 child can read independently
+  ]
+},
+"spellingPattern": {
+  "title": string,           // The pattern name — can match or briefly summarise the lesson rule
+  "body": string,            // 1-2 plain sentences explaining the pattern, Y2 vocabulary
+  "examples": [              // 2-3 examples showing the pattern in action
+    {"input": string, "output": string, "note": string}
+    // input: base or related form; output: the resulting word or exemplar; note: brief label or ""
+  ]
+},
+"sentencesAndSynonyms": [    // Exactly 4 objects — one synonym-replacement pair each
+  {
+    "original": string,      // A short sentence using a simple common synonym of one of this week's words
+    "underlined": string,    // The simpler word in the sentence that pupils should replace
+    "answer": string         // The this-week word that correctly replaces the underlined word
+  }
+],
+"wordsInAction": {
+  "prompt": string,          // Short writing instruction for pupils (e.g. "Can you write a description?")
+  "picture_prompt": string,  // A 1-sentence scene description giving teacher context (no image needed)
+  "required_words": [string], // Exactly 3 of this week's words pupils must use in their writing
+  "sample_answer": string    // A short sample sentence or two using all 3 required words
+},
+"wordSpotter": {
+  "distractors": [string]    // Exactly 6 words NOT from this week's list (plausible distractors from related rules)
+},
+"y2IncludeMorphMatrix": boolean  // true if this lesson involves adding suffixes or prefixes; false otherwise
+
+## Y3 Additional Fields
+
+If the TEACHING year group is Y3, also generate these additional fields in the JSON object.
+These are in addition to all the standard fields above.
+
+"y3Starter": {
+  "question": string,           // Instruction shown on the sorting mat slide
+  "categories": [string],       // 2-3 category labels for sorting (e.g. ["-ing", "-er", "-ed"] or ["1 syllable", "2 syllables"])
+  "last_week_words": [          // Exactly 10 words plausibly from the previous lesson's rule
+    {"word": string, "category": string}
+    // category must match exactly one of the categories strings above
+  ]
+},
+"spellingPattern": {
+  "title": string,
+  "body": string,               // 2-3 sentences explaining the pattern in Y3-appropriate language
+  "rule_note": string,          // One additional note about exceptions, word-class changes, or related patterns
+  "examples": [
+    {"base": string, "result": string, "note": string}
+    // base: the form before applying the rule; result: the derived form; note: brief explanation or ""
+  ]
+},
+"wordMatch": [                  // Exactly 6 objects — one per word from this week's list
+  {"word": string, "description": string}
+  // word: one of this week's words
+  // description: a 1-sentence concrete definition or vivid image description, Y3-appropriate, no more than 20 words
+]
 
 ## Critical rules
+
 - Return ONLY valid JSON. No markdown, no explanation.
 - Generate every field completely — no placeholders, no nulls.
 - All content must be freshly generated for this specific rule and word list.
@@ -252,7 +301,10 @@ Example of BAD etymology (DO NOT do this):
 - spellData must have exactly one row per word in words[] order.
 - Split digraph + suffix rules above must be applied to every word, anywhere in the output.
 - Never use the phrase "magic-e" or "magic e" in any field. Use "split digraph" or the specific pattern (a_e, i_e, o_e, u_e, e_e).
+- If teaching year group is Y2, also generate all Y2 Additional Fields above.
+- If teaching year group is Y3, also generate all Y3 Additional Fields above.
 """
+
 
 def _user_prompt(rule, words, year_group, rule_origin):
     cross_year_note = ""
@@ -262,16 +314,30 @@ def _user_prompt(rule, words, year_group, rule_origin):
             f"for consolidation. The words and rule come from {rule_origin} level, but ALL generated content "
             f"(sentences, definitions, morphology, cloze, etymology depth) must be pitched at {year_group} level."
         )
-
     stage_map = {"Y2": "Stage 2", "Y3": "Stage 3", "Y4": "Stage 4", "Y5": "Stage 5", "Y6": "Stage 6"}
     stage = stage_map.get(rule_origin, "Stage 4")
+
+    y23_note = ""
+    if year_group == "Y2":
+        y23_note = (
+            "\n\nThis is a Y2 lesson. In addition to the standard JSON schema, you MUST also generate "
+            "the Y2 Additional Fields: y2Starter, spellingPattern, sentencesAndSynonyms, wordsInAction, "
+            "wordSpotter, and y2IncludeMorphMatrix. All Y2 content must be simple, concrete and readable "
+            "by 6-7 year olds independently."
+        )
+    elif year_group == "Y3":
+        y23_note = (
+            "\n\nThis is a Y3 lesson. In addition to the standard JSON schema, you MUST also generate "
+            "the Y3 Additional Fields: y3Starter, spellingPattern, and wordMatch. Y3 content should be "
+            "accessible to 7-8 year olds and use clear, concrete language."
+        )
 
     return f"""Generate a complete lesson.json for the following spelling lesson.
 
 Teaching year group: {year_group}
 Rule origin level: {rule_origin} ({stage})
 Spelling rule: {rule}
-Words ({len(words)}): {", ".join(words)}{cross_year_note}
+Words ({len(words)}): {", ".join(words)}{cross_year_note}{y23_note}
 
 Pitch ALL generated content (definitions, sentences, morphology, word sort categories, etymology depth, cloze complexity) according to the {year_group} content guidance.
 
@@ -289,7 +355,6 @@ def generate_lesson_json(rule: str, words: list, year_group: str, rule_origin: s
     """
     Call the Anthropic API and return a validated lesson dict.
     Raises ValueError if the response cannot be parsed or fails basic validation.
-
     key_spelling_word is an optional class key-spelling word that gets attached
     to the returned lesson as keySpellingWord. The slides builder uses this to
     add the Quick Write Key Spelling Practice slide.
@@ -310,7 +375,6 @@ def generate_lesson_json(rule: str, words: list, year_group: str, rule_origin: s
     )
 
     raw = response.content[0].text.strip()
-
     # Strip any accidental markdown fences
     raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.IGNORECASE)
     raw = re.sub(r'\s*```$', '', raw)
@@ -321,7 +385,10 @@ def generate_lesson_json(rule: str, words: list, year_group: str, rule_origin: s
         raise ValueError(f"API returned invalid JSON: {e}\n\nRaw response (first 500 chars):\n{raw[:500]}")
 
     # Basic validation
-    _validate(lesson, words)
+    _validate(lesson, words, year_group)
+
+    # Store the year group so the slides builder can branch on it
+    lesson["yearGroup"] = year_group
 
     # Attach key spelling word for the slides builder
     if key_spelling_word:
@@ -365,7 +432,7 @@ def _looks_like_magic_e_suffix_error(word: str) -> bool:
     return bool(_MAGIC_E_SUFFIX_BAD_PATTERNS.search(w))
 
 
-def _validate(lesson: dict, words: list):
+def _validate(lesson: dict, words: list, year_group: str = "Y4"):
     """Raise ValueError if the lesson fails critical checks."""
     required_keys = [
         "rule", "stage", "code", "words", "phonemes", "defs", "sentences",
@@ -469,8 +536,6 @@ def _validate(lesson: dict, words: list):
         raise ValueError("etymology.clicks must have exactly 6 entries.")
 
     # etymology clues (first 3 cards) must not give the answer away.
-    # We forbid the target word, the baseForm, and a few simple morphological
-    # variants — anything that pupils would immediately recognise as the answer.
     target_word = (etym.get("word") or "").strip().lower()
     base_form   = (etym.get("baseForm") or "").strip().lower()
 
@@ -479,16 +544,13 @@ def _validate(lesson: dict, words: list):
         if not w or len(w) < 3:
             return set()
         v = {w}
-        # Drop trailing -e, -d, -s if present
         for suf in ("ed", "ing", "es", "s", "er", "ers", "est", "y", "ly"):
             if w.endswith(suf):
                 stem = w[:-len(suf)]
                 if len(stem) >= 3:
                     v.add(stem)
-        # Add common derivatives
         stems_to_extend = list(v)
         for stem in stems_to_extend:
-            # Drop final -e then add suffix (split-digraph friendly)
             stem_no_e = stem[:-1] if stem.endswith("e") else stem
             for suf in ("", "s", "es", "ed", "ing", "er", "ers", "est"):
                 cand = stem_no_e + suf
@@ -502,15 +564,13 @@ def _validate(lesson: dict, words: list):
     forbidden_in_clues = set()
     for w in (target_word, base_form):
         forbidden_in_clues |= _morph_variants(w)
-    # Don't accidentally forbid generic short fragments
     forbidden_in_clues = {w for w in forbidden_in_clues if len(w) >= 4}
 
     bad_clues = []
-    for i in range(3):  # only check cards 1, 2, 3 — the guessing clues
+    for i in range(3):
         card = etym["clicks"][i]
         text = (card.get("label", "") + " " + card.get("body", "")).lower()
         for forbidden in forbidden_in_clues:
-            # Word-boundary match so "race" doesn't match inside "embrace"
             if re.search(r"\b" + re.escape(forbidden) + r"\b", text):
                 bad_clues.append((i + 1, forbidden, card.get("body", "")[:80]))
                 break
@@ -526,7 +586,6 @@ def _validate(lesson: dict, words: list):
             f"or close variants. Regenerate the lesson."
         )
 
-    # First clue should NOT start with "Modern" (etymology cards must go oldest first).
     first_label = (etym["clicks"][0].get("label") or "").strip().lower()
     if first_label.startswith("modern"):
         raise ValueError(
@@ -547,6 +606,37 @@ def _validate(lesson: dict, words: list):
         raise ValueError(
             f"wordSort words {sorted(sort_words)} do not match lesson words {sorted(words)}."
         )
+
+    # Y2-specific field checks
+    if year_group == "Y2":
+        missing_y2 = [k for k in ("y2Starter", "spellingPattern", "sentencesAndSynonyms",
+                                   "wordsInAction", "wordSpotter") if k not in lesson]
+        if missing_y2:
+            raise ValueError(f"Y2 lesson missing additional fields: {missing_y2}")
+        clues = lesson.get("y2Starter", {}).get("clues", [])
+        if len(clues) != 6:
+            raise ValueError(f"y2Starter.clues must have exactly 6 entries, got {len(clues)}.")
+        sns = lesson.get("sentencesAndSynonyms", [])
+        if len(sns) != 4:
+            raise ValueError(f"sentencesAndSynonyms must have exactly 4 entries, got {len(sns)}.")
+        distractors = lesson.get("wordSpotter", {}).get("distractors", [])
+        if len(distractors) != 6:
+            raise ValueError(f"wordSpotter.distractors must have exactly 6 entries, got {len(distractors)}.")
+        req_words = lesson.get("wordsInAction", {}).get("required_words", [])
+        if len(req_words) != 3:
+            raise ValueError(f"wordsInAction.required_words must have exactly 3 entries, got {len(req_words)}.")
+
+    # Y3-specific field checks
+    if year_group == "Y3":
+        missing_y3 = [k for k in ("y3Starter", "spellingPattern", "wordMatch") if k not in lesson]
+        if missing_y3:
+            raise ValueError(f"Y3 lesson missing additional fields: {missing_y3}")
+        last_week = lesson.get("y3Starter", {}).get("last_week_words", [])
+        if len(last_week) != 10:
+            raise ValueError(f"y3Starter.last_week_words must have exactly 10 entries, got {len(last_week)}.")
+        wm = lesson.get("wordMatch", [])
+        if len(wm) != 6:
+            raise ValueError(f"wordMatch must have exactly 6 entries, got {len(wm)}.")
 
 
 def suggest_words(rule: str, year_group: str, n: int = 10) -> list:

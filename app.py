@@ -7,7 +7,6 @@ import streamlit as st
 import json
 import io
 import zipfile
-
 from content_generator import generate_lesson_json, suggest_words
 from worksheets_builder import build_worksheets
 from slides_builder import build_slides
@@ -28,26 +27,23 @@ if "word_list_input" not in st.session_state:
 
 # ── Year group and rule ───────────────────────────────────────────────────────
 
-col1, col2 = st.columns(2)
+col1, col2 = st.columns([1, 2])
+
 with col1:
     year_group = st.selectbox(
-        "Teaching year group",
+        "Which year group?",
         options=["Y2", "Y3", "Y4", "Y5", "Y6"],
         index=2,
-        help="The year group being taught. If reteaching a lower-year rule, set this to the actual class."
-    )
-with col2:
-    rule_origin = st.selectbox(
-        "Rule level",
-        options=["Y2", "Y3", "Y4", "Y5", "Y6"],
-        index=2,
-        help="The Spelling Shed stage the rule comes from. Usually matches the teaching year group."
     )
 
-spelling_rule = st.text_input(
-    "Spelling rule",
-    placeholder="e.g. Silent letter — K  /  Words ending in -tion  /  Doubling the consonant",
-)
+with col2:
+    spelling_rule = st.text_input(
+        "Spelling rule",
+        placeholder="e.g. Silent letter — K / Words ending in -tion / Doubling the consonant",
+    )
+
+# rule_origin always matches the teaching year group
+rule_origin = year_group
 
 # ── Suggest words button ──────────────────────────────────────────────────────
 
@@ -89,14 +85,12 @@ if st.button("Generate lesson", type="primary", use_container_width=True):
         errors.append("Please enter at least 6 words.")
     if len(words) > 12:
         errors.append("Please enter no more than 12 words.")
-
     if errors:
         for e in errors:
             st.error(e)
         st.stop()
 
     with st.status("Generating lesson… this takes about 30–40 seconds", expanded=True) as status:
-
         st.write("Calling AI to generate lesson data (this is the slow part)…")
         try:
             lesson = generate_lesson_json(
@@ -130,7 +124,6 @@ if st.button("Generate lesson", type="primary", use_container_width=True):
         status.update(label="Done!", state="complete")
 
     code = lesson.get("code", "XX")
-
     st.success(f"Lesson generated: **{spelling_rule}** ({year_group}, {len(words)} words)")
 
     col_a, col_b, col_c, col_d = st.columns(4)

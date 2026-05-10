@@ -1,12 +1,13 @@
 """
 slides_builder.py
-python-pptx port of slides-template.js — Y4/Y5/Y6 teaching deck.
-21 slides. No click animations in this version (added separately).
+python-pptx port of slides-template.js — teaching deck.
+Y4/Y5/Y6: 22 slides. Y3: 18 slides. Y2: 16 slides (+ optional morph matrix).
 Returns raw PPTX bytes.
 """
 
 import io
 import os
+import random
 import zipfile
 import shutil
 from pptx import Presentation
@@ -24,6 +25,7 @@ def build_slides(lesson: dict) -> bytes:
     SENTENCES   = lesson["sentences"]
     CLOZE_ORDER = lesson["clozeOrder"]
     CODE        = lesson["code"]
+    YEAR_GROUP  = lesson.get("yearGroup", "Y4")
 
     def rgb(h):
         return RGBColor.from_string(h)
@@ -55,15 +57,9 @@ def build_slides(lesson: dict) -> bytes:
     prs.slide_height = Inches(SH)
     BLANK = prs.slide_layouts[6]
 
-    # Animation registry: list of (slide, click_groups) tuples. Each click_groups
-    # entry is a list of shape lists; shapes in the same inner list reveal together
-    # on a single click. Shapes are initially hidden via "Appear" entrance effect.
     slide_animations = []
 
     def register_clicks(slide, *click_groups):
-        """Register click-reveal animations for this slide.
-        Each argument is a list of shapes (or a single shape) to reveal on one click.
-        Empty lists and None values are skipped."""
         groups = []
         for cg in click_groups:
             if cg is None:
@@ -77,13 +73,8 @@ def build_slides(lesson: dict) -> bytes:
             slide_animations.append((slide, groups))
 
     def inject_click_animations():
-        """Walk the animation registry and inject p:timing + p:bldLst onto each
-        registered slide. Matches the structure produced by the existing
-        spelling-shed skill: nested p:par groups, click-trigger first effect,
-        then with-effect siblings, all using presetID=1 presetClass=entr (Appear)."""
         P = "http://schemas.openxmlformats.org/presentationml/2006/main"
-        A = "http://schemas.openxmlformats.org/drawingml/2006/main"
-        nsmap = {"p": P, "a": A}
+        nsmap = {"p": P}
 
         def Pe(parent, tag, **attrs):
             el = etree.SubElement(parent, "{%s}%s" % (P, tag))
@@ -93,7 +84,6 @@ def build_slides(lesson: dict) -> bytes:
 
         for slide, click_groups in slide_animations:
             sld = slide._element
-            # Strip any existing timing/bldLst (idempotent)
             for tag in ("timing", "bldLst"):
                 existing = sld.find("{%s}%s" % (P, tag))
                 if existing is not None:
@@ -160,8 +150,6 @@ def build_slides(lesson: dict) -> bytes:
             for spid in all_spids:
                 Pe(bldLst, "bldP", spid=str(spid), grpId="0", animBg="1")
 
-            # Append navigation conditions inside <seq> (after mainSeq cTn) so the
-            # arrow keys / click anywhere advance the animation. Matches reference.
             prevCondLst = Pe(seq, "prevCondLst")
             prev_cond = Pe(prevCondLst, "cond", evt="onPrev", delay="0")
             prev_tgt = Pe(prev_cond, "tgtEl")
@@ -314,7 +302,7 @@ def build_slides(lesson: dict) -> bytes:
                     sc.set('val', border_hex)
         return ts
 
-    # ── Frame (standard header used by most slides) ───────────────────────────
+    # ── Frame ─────────────────────────────────────────────────────────────────
 
     def add_frame(slide, activity_type, activity_label, question, slide_num):
         ind_col = "F4C430" if activity_type == "Independent" else "66BB6A"
@@ -335,8 +323,228 @@ def build_slides(lesson: dict) -> bytes:
         req = (box_w * 72) / (n * 0.54)
         return round(min(max_pt, max(min_pt, req)))
 
+    # ── Sound button drawing ──────────────────────────────────────────────────
+
+    def _draw_bezier_arc(slide, x1, y1, x2, y2, peak_y, line_w):
+        EMU = 914400
+        cx = (x1 + x2) / 2
+        mid_y = (y1 + y2) / 2
+        cy = 2 * peak_y - mid_y
+
+        bx_min = min(x1, x2, cx)
+        bx_max = max(x1, x2, cx)
+        by_min = min(y1, y2, peak_y, cy)
+        by_max = max(y1, y2, peak_y, cy)
+        box_x = bx_min
+        box_y = by_min
+        box_w = max(bx_max - bx_min, 0.001)
+        box_h = max(by_max - by_min, 0.001)
+
+        path_max = 21600
+        def to_path_x(x):
+            return int((x - box_x) / box_w * path_max) if box_w > 0 else 0
+        def to_path_y(y):
+            return int((y - box_y) / box_h * path_max) if box_h > 0 else 0
+
+        sp = etree.SubElement(slide.shapes._spTree, qn('p:sp'))
+        nvSpPr = etree.SubElement(sp, qn('p:nvSpPr'))
+        cNvPr = etree.SubElement(nvSpPr, qn('p:cNvPr'))
+        cNvPr.set('id', str(slide.shapes._next_shape_id))
+        cNvPr.set('name', 'BezierArc')
+        etree.SubElement(nvSpPr, qn('p:cNvSpPr'))
+        etree.SubElement(nvSpPr, qn('p:nvPr'))
+        spPr = etree.SubElement(sp, qn('p:spPr'))
+
+        xfrm = etree.SubElement(spPr, qn('a:xfrm'))
+        off = etree.SubElement(xfrm, qn('a:off'))
+        off.set('x', str(int(box_x * EMU)))
+        off.set('y', str(int(box_y * EMU)))
+        ext = etree.SubElement(xfrm, qn('a:ext'))
+        ext.set('cx', str(int(box_w * EMU)))
+        ext.set('cy', str(int(box_h * EMU)))
+
+        custGeom = etree.SubElement(spPr, qn('a:custGeom'))
+        etree.SubElement(custGeom, qn('a:avLst'))
+        etree.SubElement(custGeom, qn('a:gdLst'))
+        etree.SubElement(custGeom, qn('a:ahLst'))
+        etree.SubElement(custGeom, qn('a:cxnLst'))
+        etree.SubElement(custGeom, qn('a:rect')).attrib.update(
+            {'l': '0', 't': '0', 'r': str(path_max), 'b': str(path_max)})
+
+        pathLst = etree.SubElement(custGeom, qn('a:pathLst'))
+        path = etree.SubElement(pathLst, qn('a:path'))
+        path.set('w', str(path_max))
+        path.set('h', str(path_max))
+
+        moveTo = etree.SubElement(path, qn('a:moveTo'))
+        pt = etree.SubElement(moveTo, qn('a:pt'))
+        pt.set('x', str(to_path_x(x1)))
+        pt.set('y', str(to_path_y(y1)))
+
+        quadBezTo = etree.SubElement(path, qn('a:quadBezTo'))
+        ctrl = etree.SubElement(quadBezTo, qn('a:pt'))
+        ctrl.set('x', str(to_path_x(cx)))
+        ctrl.set('y', str(to_path_y(cy)))
+        end = etree.SubElement(quadBezTo, qn('a:pt'))
+        end.set('x', str(to_path_x(x2)))
+        end.set('y', str(to_path_y(y2)))
+
+        noFill = etree.SubElement(spPr, qn('a:noFill'))
+        ln = etree.SubElement(spPr, qn('a:ln'))
+        ln.set('w', str(int(line_w * 12700)))
+        ln.set('cap', 'rnd')
+        solidFill = etree.SubElement(ln, qn('a:solidFill'))
+        clr = etree.SubElement(solidFill, qn('a:srgbClr'))
+        clr.set('val', C["BLACK"])
+
+    def draw_sound_buttons(slide, word, cx, wy, font_size):
+        phonemes = lesson["phonemes"].get(word)
+        if not phonemes:
+            return
+
+        CELL_W = max(font_size / 28 * 0.40, font_size * 0.018)
+        ROW_H  = font_size * 1.4 / 72
+        DOT    = max(0.040, font_size * 0.084 / 28)
+        LINE_H = max(0.018, font_size * 0.046 / 28)
+        PAD    = CELL_W * 0.07
+        GAP    = 0.04
+
+        n_cells = sum(len(g["l"]) for g in phonemes)
+        total_w = n_cells * CELL_W
+        table_x = cx - total_w / 2
+        sym_y   = wy + ROW_H + GAP
+        line_y  = sym_y + (DOT - LINE_H) / 2
+
+        ts = slide.shapes.add_table(
+            1, n_cells,
+            Inches(table_x), Inches(wy),
+            Inches(total_w), Inches(ROW_H)
+        )
+        tbl = ts.table
+        for ci in range(n_cells):
+            tbl.columns[ci].width = Inches(CELL_W)
+        tbl.rows[0].height = Inches(ROW_H)
+
+        ci = 0
+        for g in phonemes:
+            for ch in g["l"]:
+                cell = tbl.cell(0, ci)
+                cell.fill.background()
+                tc = cell._tc
+                tcPr = tc.get_or_add_tcPr()
+                tcPr.set('marL', '0')
+                tcPr.set('marR', '0')
+                tcPr.set('marT', '0')
+                tcPr.set('marB', '0')
+                tf = cell.text_frame
+                _bodyPr(tf._txBody, valign="middle", margin_in=0)
+                p = tf.paragraphs[0]
+                p.alignment = PP_ALIGN.CENTER
+                run = p.add_run()
+                run.text = ch
+                run.font.name = FONT
+                run.font.size = Pt(int(font_size))
+                run.font.bold = False
+                run.font.color.rgb = rgb(C["BLACK"])
+                for edge in ('lnL', 'lnR', 'lnT', 'lnB'):
+                    ln = tcPr.find(qn(f'a:{edge}'))
+                    if ln is None:
+                        ln = etree.SubElement(tcPr, qn(f'a:{edge}'))
+                    for sf in ln.findall(qn('a:solidFill')):
+                        ln.remove(sf)
+                    if ln.find(qn('a:noFill')) is None:
+                        etree.SubElement(ln, qn('a:noFill'))
+                ci += 1
+
+        col = 0
+        gd = []
+        for g in phonemes:
+            n  = len(g["l"])
+            gx = table_x + col * CELL_W
+            gw = n * CELL_W
+            gd.append({**g, "gx": gx, "gw": gw, "gc": gx + gw / 2})
+            col += n
+
+        for g in gd:
+            if g["t"] == "line":
+                rect(slide, g["gx"] + PAD, line_y,
+                     g["gw"] - 2 * PAD, LINE_H, C["BLACK"])
+
+        for g in gd:
+            if g["t"] == "dot" and "sid" not in g:
+                shape = slide.shapes.add_shape(
+                    9,
+                    Inches(g["gc"] - DOT / 2), Inches(sym_y),
+                    Inches(DOT), Inches(DOT)
+                )
+                shape.fill.solid()
+                shape.fill.fore_color.rgb = rgb(C["BLACK"])
+                shape.line.fill.background()
+
+        splits = {}
+        for g in gd:
+            if "sid" in g:
+                splits.setdefault(g["sid"], []).append(g)
+
+        for sid, pair in splits.items():
+            if len(pair) < 2:
+                continue
+            pair.sort(key=lambda g: g["gx"])
+            x1, x2 = pair[0]["gc"], pair[-1]["gc"]
+            arc_h = min(0.14, max(0.08, font_size * 0.005))
+            base_y = sym_y + DOT * 0.5
+            peak_y = base_y + arc_h
+            line_w = max(1.0, font_size * 0.05)
+            _draw_bezier_arc(slide, x1, base_y, x2, base_y, peak_y, line_w)
+
+    def draw_phoneme_symbols_only(slide, word, cx, wy, scale=1.0):
+        """Draw phoneme dots/lines/arcs without the letter table. Returns total width drawn."""
+        phonemes = lesson["phonemes"].get(word)
+        if not phonemes:
+            return 0.0
+        UNIT   = max(0.12, 0.15 * scale)
+        DOT    = max(0.055, 0.065 * scale)
+        LINE_H = max(0.015, 0.018 * scale)
+        PAD    = max(0.008, 0.01 * scale)
+        n_cells = sum(len(g["l"]) for g in phonemes)
+        total_w = n_cells * UNIT
+        sx = cx - total_w / 2
+        col = 0
+        gd = []
+        for g in phonemes:
+            n = len(g["l"])
+            gx = sx + col * UNIT
+            gw = n * UNIT
+            gd.append({**g, "gx": gx, "gw": gw, "gc": gx + gw / 2})
+            col += n
+        line_y = wy + (DOT - LINE_H) / 2
+        for g in gd:
+            if g["t"] == "line":
+                rect(slide, g["gx"] + PAD, line_y,
+                     max(g["gw"] - 2 * PAD, 0.001), LINE_H, C["BLACK"])
+        for g in gd:
+            if g["t"] == "dot" and "sid" not in g:
+                sh = slide.shapes.add_shape(
+                    9, Inches(g["gc"] - DOT / 2), Inches(wy), Inches(DOT), Inches(DOT))
+                sh.fill.solid()
+                sh.fill.fore_color.rgb = rgb(C["BLACK"])
+                sh.line.fill.background()
+        splits = {}
+        for g in gd:
+            if "sid" in g:
+                splits.setdefault(g["sid"], []).append(g)
+        for sid, pair in splits.items():
+            if len(pair) < 2:
+                continue
+            pair.sort(key=lambda g: g["gx"])
+            x1, x2 = pair[0]["gc"], pair[-1]["gc"]
+            arc_h = max(0.04, 0.06 * scale)
+            base_y = wy + DOT * 0.5
+            _draw_bezier_arc(slide, x1, base_y, x2, base_y, base_y + arc_h, max(0.8, 1.5 * scale))
+        return total_w
+
     # ════════════════════════════════════════════════════════════════════════
-    # SLIDE 1 — Title
+    # SLIDE 1 — Title (shared all year groups)
     # ════════════════════════════════════════════════════════════════════════
 
     def slide1():
@@ -356,7 +564,7 @@ def build_slides(lesson: dict) -> bytes:
         if stage_val.lower().startswith("stage"):
             stage_val = stage_val[5:].strip().lstrip(":").strip()
         badge(s, "Stage: " + stage_val, 3.2, 1.75, 1.6, 0.75)
-        badge(s, "Lesson: " + CODE,           5.2, 1.75, 1.6, 0.75)
+        badge(s, "Lesson: " + CODE,     5.2, 1.75, 1.6, 0.75)
 
         obj = f"To spell words: {lesson['rule']}"
         txt(s, obj, 0.5, 3.42, 9.0, 0.42,
@@ -365,13 +573,9 @@ def build_slides(lesson: dict) -> bytes:
             0.5, 4.35, 9.0, 0.55, size=17, color=C["BLACK"], align="center")
 
     # ════════════════════════════════════════════════════════════════════════
-    # SLIDE — Key Spelling Practice (Quick Write word)
-    # Inserted at position 2 (after title) when keySpellingWord is provided.
-    # The timer MP4 is post-processed into the saved zip; here we just place
-    # the static thumbnail image as the picture.
+    # SLIDE — Key Spelling Practice (shared all year groups)
     # ════════════════════════════════════════════════════════════════════════
 
-    # Track which slide gets the video upgrade so the post-processor can find it.
     key_spelling_slide_index = [None]
     key_spelling_pic_id = [None]
 
@@ -382,26 +586,21 @@ def build_slides(lesson: dict) -> bytes:
         add_frame(s, "Whole Group", "Key Spelling Practice",
                   "Quick Write word", "KSp")
 
-        # Yellow "Today's word is..." banner
         rect(s, 0.58, 1.42, 8.23, 0.45, "FFF9C4", C["YELLOW"], 1.5)
         txt(s, "Today's word is…", 0.58, 1.42, 8.23, 0.45,
             size=16, bold=True, color=C["BLACK"], align="center", margin=0)
 
-        # Big focus word
         word = str(lesson["keySpellingWord"])
-        # Scale font down if word is unusually long so it fits
         word_fs = 66
         if len(word) > 9:
             word_fs = max(40, int(66 * 9 / len(word)))
         txt(s, word, 1.0, 2.34, 8.0, 1.21,
             size=word_fs, color=C["BLACK"], align="center", valign="middle", margin=0)
 
-        # Question prompt
         txt(s, "How many times can you write the word in 1 minute?",
             2.0, 4.27, 6.0, 0.40,
             size=14, color=C["BLACK"], align="center", margin=0)
 
-        # Timer thumbnail (will be upgraded to video in post-processing)
         timer_img = os.path.join(os.path.dirname(__file__), "assets", "timer_1min_thumb.png")
         if os.path.exists(timer_img):
             pic = s.shapes.add_picture(
@@ -409,12 +608,11 @@ def build_slides(lesson: dict) -> bytes:
                 Inches(4.38), Inches(4.83),
                 Inches(1.40), Inches(0.42)
             )
-            # Remember this slide and pic so post-processing can swap in the video.
             key_spelling_slide_index[0] = len(prs.slides) - 1
             key_spelling_pic_id[0] = pic.shape_id
 
     # ════════════════════════════════════════════════════════════════════════
-    # SLIDE 2 — Starter (blank)
+    # Y4/Y5/Y6 SLIDES
     # ════════════════════════════════════════════════════════════════════════
 
     def slide2():
@@ -439,10 +637,6 @@ def build_slides(lesson: dict) -> bytes:
             txt(s, f"{label} ______________________",
                 x + 0.15, y + 1.1, cell_w - 0.3, 0.3,
                 size=14, color=C["BLACK"], align="left")
-
-    # ════════════════════════════════════════════════════════════════════════
-    # SLIDE 3 — Starter (answers)
-    # ════════════════════════════════════════════════════════════════════════
 
     def slide3():
         s = prs.slides.add_slide(BLANK)
@@ -486,10 +680,6 @@ def build_slides(lesson: dict) -> bytes:
 
         register_clicks(s, *click_groups)
 
-    # ════════════════════════════════════════════════════════════════════════
-    # SLIDE 4 — This Week's Words
-    # ════════════════════════════════════════════════════════════════════════
-
     def slide4():
         s = prs.slides.add_slide(BLANK)
         add_frame(s, "Whole Group", "This Week's Words",
@@ -504,7 +694,6 @@ def build_slides(lesson: dict) -> bytes:
                 y = CONT_Y + 0.3 + ri * 1.30
                 txt(s, w, x, y, cell_w, 0.85,
                     size=fs, color=C["BLACK"], align="center", valign="bottom")
-                # Pink underline bar centred under the word
                 bar_w = cell_w - 0.6
                 rect(s, x + 0.3, y + 0.92, bar_w, 0.06, C["PINK"])
 
@@ -515,10 +704,6 @@ def build_slides(lesson: dict) -> bytes:
             4.8, CONT_Y + 3.05, 4.8, 0.55,
             size=14, color=C["BLACK"], align="left")
         register_clicks(s, prompt_shape, explanation_shape)
-
-    # ════════════════════════════════════════════════════════════════════════
-    # SLIDE 5 — Etymology
-    # ════════════════════════════════════════════════════════════════════════
 
     def slide5():
         s = prs.slides.add_slide(BLANK)
@@ -571,10 +756,6 @@ def build_slides(lesson: dict) -> bytes:
             [right_label_shape, right_body_shape],
         )
 
-    # ════════════════════════════════════════════════════════════════════════
-    # SLIDE 6 — Syllable Count
-    # ════════════════════════════════════════════════════════════════════════
-
     def slide6():
         s = prs.slides.add_slide(BLANK)
         add_frame(s, "Whole Group", "Syllable Count",
@@ -607,10 +788,6 @@ def build_slides(lesson: dict) -> bytes:
 
         register_clicks(s, click_shapes)
 
-    # ════════════════════════════════════════════════════════════════════════
-    # SLIDE 7 — Word Sort (blank)
-    # ════════════════════════════════════════════════════════════════════════
-
     def slide7():
         s = prs.slides.add_slide(BLANK)
         add_frame(s, "Whole Group", "Word Sort",
@@ -637,10 +814,6 @@ def build_slides(lesson: dict) -> bytes:
         txt(s, ws["hint"], 0.5, BOX_Y + BOX_H + 0.12, 9.0, 0.32,
             size=12, italic=True, color=C["GREY"], align="center")
 
-    # ════════════════════════════════════════════════════════════════════════
-    # SLIDE 8 — Word Sort (answers)
-    # ════════════════════════════════════════════════════════════════════════
-
     def slide8():
         s = prs.slides.add_slide(BLANK)
         add_frame(s, "Whole Group", "Word Sort", "Answers", f"{CODE}.7")
@@ -653,21 +826,19 @@ def build_slides(lesson: dict) -> bytes:
         verb_only = ws["verbOnly"]
         verb_noun = ws["verbNoun"]
 
-        # ── Left box — scale row height to fit all words ──────────────────────
         rect(s, 0.35, BOX_Y, 4.45, BOX_H, C["WHITE"], C["PURPLE"], 3, radius=0.15)
         txt(s, ws["box1label"] + "  " + ws["box1sub"],
             0.45, BOX_Y + 0.08, 4.25, 0.35,
             size=14, bold=True, color=C["PURPLE"], align="center")
 
         if verb_only:
-            available_h = BOX_H - 0.50 - 0.10  # below label, above bottom padding
+            available_h = BOX_H - 0.50 - 0.10
             row_h  = min(0.52, available_h / len(verb_only))
             font_s = max(9, min(13, int(row_h * 22)))
             for i, w in enumerate(verb_only):
                 txt(s, w, 0.55, BOX_Y + 0.50 + i * row_h, 4.15, row_h,
                     size=font_s, bold=True, color=C["PINK"], align="center")
 
-        # ── Right box — scale row height to fit all words ─────────────────────
         rect(s, 5.2, BOX_Y, 4.45, BOX_H, C["WHITE"], C["GREEN_S"], 3, radius=0.15)
         txt(s, ws["box2label"], 5.3, BOX_Y + 0.08, 4.25, 0.35,
             size=14, bold=True, color=C["GREEN_S"], align="center")
@@ -685,215 +856,6 @@ def build_slides(lesson: dict) -> bytes:
 
         txt(s, ws["exampleLine"], 0.5, BOX_Y + BOX_H + 0.12, 9.0, 0.30,
             size=12, color=C["BLACK"], align="center")
-
-    # ── Sound button drawing ──────────────────────────────────────────────────
-
-    def _draw_bezier_arc(slide, x1, y1, x2, y2, peak_y, line_w):
-        """
-        Draw a smooth arc from (x1,y1) up to peak (centre, peak_y) down to (x2,y2)
-        as a freeform shape with a quadratic Bezier curve. All coords in inches.
-        """
-        EMU = 914400
-        # Compute control point first so we can include it in the bounding box
-        cx = (x1 + x2) / 2
-        mid_y = (y1 + y2) / 2
-        cy = 2 * peak_y - mid_y
-
-        # Bounding box: encompasses both endpoints, peak AND control point
-        bx_min = min(x1, x2, cx)
-        bx_max = max(x1, x2, cx)
-        by_min = min(y1, y2, peak_y, cy)
-        by_max = max(y1, y2, peak_y, cy)
-        box_x = bx_min
-        box_y = by_min
-        box_w = max(bx_max - bx_min, 0.001)
-        box_h = max(by_max - by_min, 0.001)
-
-        # Coordinates inside the path are 0..21600 (drawingML default path coord space)
-        path_max = 21600
-        def to_path_x(x):
-            return int((x - box_x) / box_w * path_max) if box_w > 0 else 0
-        def to_path_y(y):
-            return int((y - box_y) / box_h * path_max) if box_h > 0 else 0
-
-        sp = etree.SubElement(slide.shapes._spTree, qn('p:sp'))
-        nvSpPr = etree.SubElement(sp, qn('p:nvSpPr'))
-        cNvPr = etree.SubElement(nvSpPr, qn('p:cNvPr'))
-        cNvPr.set('id', str(slide.shapes._next_shape_id))
-        cNvPr.set('name', 'BezierArc')
-        etree.SubElement(nvSpPr, qn('p:cNvSpPr'))
-        etree.SubElement(nvSpPr, qn('p:nvPr'))
-        spPr = etree.SubElement(sp, qn('p:spPr'))
-
-        xfrm = etree.SubElement(spPr, qn('a:xfrm'))
-        off = etree.SubElement(xfrm, qn('a:off'))
-        off.set('x', str(int(box_x * EMU)))
-        off.set('y', str(int(box_y * EMU)))
-        ext = etree.SubElement(xfrm, qn('a:ext'))
-        ext.set('cx', str(int(box_w * EMU)))
-        ext.set('cy', str(int(box_h * EMU)))
-
-        custGeom = etree.SubElement(spPr, qn('a:custGeom'))
-        etree.SubElement(custGeom, qn('a:avLst'))
-        etree.SubElement(custGeom, qn('a:gdLst'))
-        etree.SubElement(custGeom, qn('a:ahLst'))
-        etree.SubElement(custGeom, qn('a:cxnLst'))
-        etree.SubElement(custGeom, qn('a:rect')).attrib.update(
-            {'l': '0', 't': '0', 'r': str(path_max), 'b': str(path_max)})
-
-        pathLst = etree.SubElement(custGeom, qn('a:pathLst'))
-        path = etree.SubElement(pathLst, qn('a:path'))
-        path.set('w', str(path_max))
-        path.set('h', str(path_max))
-
-        moveTo = etree.SubElement(path, qn('a:moveTo'))
-        pt = etree.SubElement(moveTo, qn('a:pt'))
-        pt.set('x', str(to_path_x(x1)))
-        pt.set('y', str(to_path_y(y1)))
-
-        quadBezTo = etree.SubElement(path, qn('a:quadBezTo'))
-        ctrl = etree.SubElement(quadBezTo, qn('a:pt'))
-        ctrl.set('x', str(to_path_x(cx)))
-        ctrl.set('y', str(to_path_y(cy)))
-        end = etree.SubElement(quadBezTo, qn('a:pt'))
-        end.set('x', str(to_path_x(x2)))
-        end.set('y', str(to_path_y(y2)))
-
-        # No fill, black stroke
-        noFill = etree.SubElement(spPr, qn('a:noFill'))
-        ln = etree.SubElement(spPr, qn('a:ln'))
-        ln.set('w', str(int(line_w * 12700)))  # EMU per pt
-        ln.set('cap', 'rnd')
-        solidFill = etree.SubElement(ln, qn('a:solidFill'))
-        clr = etree.SubElement(solidFill, qn('a:srgbClr'))
-        clr.set('val', C["BLACK"])
-
-    def draw_sound_buttons(slide, word, cx, wy, font_size):
-        """
-        Draw sound buttons centred at cx, top at wy.
-        Letters in a no-border table; dots under single phonemes; bars under digraphs.
-        """
-        phonemes = lesson["phonemes"].get(word)
-        if not phonemes:
-            return
-
-        # CELL_W per letter. At small fonts (~13pt) the linear formula leaves no
-        # room for letter glyphs once cell margins are stripped, so use a slightly
-        # generous floor that scales with point size.
-        CELL_W = max(font_size / 28 * 0.40, font_size * 0.018)
-        ROW_H  = font_size * 1.4 / 72
-        DOT    = max(0.040, font_size * 0.084 / 28)
-        LINE_H = max(0.018, font_size * 0.046 / 28)
-        PAD    = CELL_W * 0.07
-        GAP    = 0.04
-
-        n_cells = sum(len(g["l"]) for g in phonemes)
-        total_w = n_cells * CELL_W
-        table_x = cx - total_w / 2
-        sym_y   = wy + ROW_H + GAP
-        line_y  = sym_y + (DOT - LINE_H) / 2
-
-        # Letter table — one cell per letter, no borders
-        ts = slide.shapes.add_table(
-            1, n_cells,
-            Inches(table_x), Inches(wy),
-            Inches(total_w), Inches(ROW_H)
-        )
-        tbl = ts.table
-        for ci in range(n_cells):
-            tbl.columns[ci].width = Inches(CELL_W)
-        tbl.rows[0].height = Inches(ROW_H)
-
-        ci = 0
-        for g in phonemes:
-            for ch in g["l"]:
-                cell = tbl.cell(0, ci)
-                # Transparent fill so shapes drawn below are visible
-                cell.fill.background()
-                # Zero cell insets so the letter is centred in its full cell width.
-                # Default OOXML insets (marL/marR/marT/marB) are 91440 EMU (0.1") and
-                # at small font sizes leave no room for the letter, causing drift.
-                tc = cell._tc
-                tcPr = tc.get_or_add_tcPr()
-                tcPr.set('marL', '0')
-                tcPr.set('marR', '0')
-                tcPr.set('marT', '0')
-                tcPr.set('marB', '0')
-                tf = cell.text_frame
-                _bodyPr(tf._txBody, valign="middle", margin_in=0)
-                p = tf.paragraphs[0]
-                p.alignment = PP_ALIGN.CENTER
-                run = p.add_run()
-                run.text = ch
-                run.font.name = FONT
-                run.font.size = Pt(int(font_size))
-                run.font.bold = False
-                run.font.color.rgb = rgb(C["BLACK"])
-                # Remove all borders
-                for edge in ('lnL', 'lnR', 'lnT', 'lnB'):
-                    ln = tcPr.find(qn(f'a:{edge}'))
-                    if ln is None:
-                        ln = etree.SubElement(tcPr, qn(f'a:{edge}'))
-                    for sf in ln.findall(qn('a:solidFill')):
-                        ln.remove(sf)
-                    if ln.find(qn('a:noFill')) is None:
-                        etree.SubElement(ln, qn('a:noFill'))
-                ci += 1
-
-        # Per-group geometry
-        col = 0
-        gd = []
-        for g in phonemes:
-            n  = len(g["l"])
-            gx = table_x + col * CELL_W
-            gw = n * CELL_W
-            gd.append({**g, "gx": gx, "gw": gw, "gc": gx + gw / 2})
-            col += n
-
-        # Digraph bars
-        for g in gd:
-            if g["t"] == "line":
-                rect(slide, g["gx"] + PAD, line_y,
-                     g["gw"] - 2 * PAD, LINE_H, C["BLACK"])
-
-        # Dots under single phonemes only.
-        # Split digraph members get NO dot — the arc replaces the dots entirely.
-        for g in gd:
-            if g["t"] == "dot" and "sid" not in g:
-                shape = slide.shapes.add_shape(
-                    9,  # MSO_SHAPE_TYPE.OVAL
-                    Inches(g["gc"] - DOT / 2), Inches(sym_y),
-                    Inches(DOT), Inches(DOT)
-                )
-                shape.fill.solid()
-                shape.fill.fore_color.rgb = rgb(C["BLACK"])
-                shape.line.fill.background()
-
-        # Split digraphs — draw a Bezier arc above the letters joining the two members.
-        # No dots under either member; the arc replaces them.
-        splits = {}
-        for g in gd:
-            if "sid" in g:
-                sid = g["sid"]
-                splits.setdefault(sid, []).append(g)
-
-        for sid, pair in splits.items():
-            if len(pair) < 2:
-                continue
-            pair.sort(key=lambda g: g["gx"])
-            x1, x2 = pair[0]["gc"], pair[-1]["gc"]
-            # Arc depth scaled to font size but capped to avoid crashing into
-            # surrounding content (legends, table cell borders, etc).
-            arc_h = min(0.14, max(0.08, font_size * 0.005))
-            base_y = sym_y + DOT * 0.5
-            peak_y = base_y + arc_h
-            line_w = max(1.0, font_size * 0.05)
-
-            _draw_bezier_arc(slide, x1, base_y, x2, base_y, peak_y, line_w)
-
-    # ════════════════════════════════════════════════════════════════════════
-    # SLIDE 9 — Syllable & Phoneme Map (worked examples)
-    # ════════════════════════════════════════════════════════════════════════
 
     def slide9():
         s = prs.slides.add_slide(BLANK)
@@ -915,7 +877,6 @@ def build_slides(lesson: dict) -> bytes:
 
             txt(s, w, x, sy, cw, 0.7,
                 size=fs, color=C["PINK"], align="center")
-
             txt(s, "Syllable Breaks", x, sy + 0.75, cw, 0.3,
                 size=12, bold=True, color=C["BLUE"], align="center")
             rect(s, x, sy + 1.08, cw, 0.5, C["WHITE"], C["BLUE"], 1.5)
@@ -924,17 +885,12 @@ def build_slides(lesson: dict) -> bytes:
             txt(s, f"{n} syllable{'s' if n > 1 else ''}",
                 x, sy + 1.62, cw, 0.28,
                 size=12, italic=True, color=C["GREY"], align="center")
-
             txt(s, "Sound Buttons", x, sy + 1.95, cw, 0.3,
                 size=12, bold=True, color=C["PINK"], align="center")
             draw_sound_buttons(s, w, cx, sy + 2.32, 22)
             txt(s, "● = single sound   — = letters making one sound",
                 x, sy + 2.88, cw, 0.22,
                 size=9, italic=True, color=C["GREY"], align="center")
-
-    # ════════════════════════════════════════════════════════════════════════
-    # SLIDE 10 — Word Maps (blank table)
-    # ════════════════════════════════════════════════════════════════════════
 
     def slide10():
         s = prs.slides.add_slide(BLANK)
@@ -961,10 +917,6 @@ def build_slides(lesson: dict) -> bytes:
               0.35, CONT_Y + 0.1, 9.3, CONT_H - 0.15,
               [2.0, 2.5, 2.9, 1.9], rh)
 
-    # ════════════════════════════════════════════════════════════════════════
-    # SLIDE 11 — Word Maps (answers)
-    # ════════════════════════════════════════════════════════════════════════
-
     def slide11():
         s = prs.slides.add_slide(BLANK)
         add_frame(s, "Whole Group", "Word Maps", "Answers", f"{CODE}.10")
@@ -989,9 +941,8 @@ def build_slides(lesson: dict) -> bytes:
                    0.35, CONT_Y + 0.1, 9.3, CONT_H - 0.15,
                    [2.0, 2.5, 2.9, 1.9], rh)
 
-        # Draw sound buttons over the Sound Buttons column (col index 2)
         TABLE_X   = 0.35
-        SB_COL_X  = TABLE_X + 2.0 + 2.5   # 4.85"
+        SB_COL_X  = TABLE_X + 2.0 + 2.5
         SB_COL_W  = 2.9
         HDR_H_IN  = 0.5
         ROW_H_IN  = 0.57
@@ -1000,18 +951,11 @@ def build_slides(lesson: dict) -> bytes:
         for ri, w in enumerate(map_words):
             cell_top_y = CONT_Y + 0.1 + HDR_H_IN + ri * ROW_H_IN
             cell_cx    = SB_COL_X + SB_COL_W / 2
-
-            # Estimate height of sound button display to centre it
             row_h_sb   = SB_FS * 1.4 / 72
             dot_h      = max(0.040, SB_FS * 0.084 / 28)
             total_sb_h = row_h_sb + 0.04 + dot_h
             word_top_y = cell_top_y + (ROW_H_IN - total_sb_h) / 2
-
             draw_sound_buttons(s, w, cell_cx, word_top_y, SB_FS)
-
-    # ════════════════════════════════════════════════════════════════════════
-    # SLIDE 12 — Definitions and In a Sentence (blank)
-    # ════════════════════════════════════════════════════════════════════════
 
     def slide12():
         s = prs.slides.add_slide(BLANK)
@@ -1035,10 +979,6 @@ def build_slides(lesson: dict) -> bytes:
               0.35, CONT_Y + 0.05, 9.3, CONT_H - 0.1,
               [1.4, 3.7, 4.2], rh)
 
-    # ════════════════════════════════════════════════════════════════════════
-    # SLIDE 13 — Definitions and In a Sentence (answers)
-    # ════════════════════════════════════════════════════════════════════════
-
     def slide13():
         s = prs.slides.add_slide(BLANK)
         add_frame(s, "Independent", "Definitions and In a Sentence",
@@ -1061,10 +1001,6 @@ def build_slides(lesson: dict) -> bytes:
               0.35, CONT_Y + 0.05, 9.3, CONT_H - 0.1,
               [1.4, 3.55, 4.35], rh)
 
-    # ════════════════════════════════════════════════════════════════════════
-    # SLIDE 14 — Spell Check (blank)
-    # ════════════════════════════════════════════════════════════════════════
-
     def slide14():
         s = prs.slides.add_slide(BLANK)
         add_frame(s, "Independent", "Spell Check",
@@ -1078,10 +1014,6 @@ def build_slides(lesson: dict) -> bytes:
         table(s, rows,
               0.35, CONT_Y + 0.05, 9.3, CONT_H - 0.05,
               [3.1, 3.1, 3.1], 0.4)
-
-    # ════════════════════════════════════════════════════════════════════════
-    # SLIDE 15 — Spell Check (answers)
-    # ════════════════════════════════════════════════════════════════════════
 
     def slide15():
         s = prs.slides.add_slide(BLANK)
@@ -1100,10 +1032,6 @@ def build_slides(lesson: dict) -> bytes:
         table(s, rows,
               0.35, CONT_Y + 0.05, 9.3, CONT_H - 0.05,
               [3.1, 3.1, 3.1], 0.4)
-
-    # ════════════════════════════════════════════════════════════════════════
-    # SLIDE 16 — Cloze (blank)
-    # ════════════════════════════════════════════════════════════════════════
 
     def slide16():
         s = prs.slides.add_slide(BLANK)
@@ -1132,10 +1060,6 @@ def build_slides(lesson: dict) -> bytes:
             ], 1.95, CONT_Y + 0.05 + i * row_h, 7.75, row_h,
                align="left", valign="middle", margin=0.03)
 
-    # ════════════════════════════════════════════════════════════════════════
-    # SLIDE 17 — Cloze (answers)
-    # ════════════════════════════════════════════════════════════════════════
-
     def slide17():
         s = prs.slides.add_slide(BLANK)
         add_frame(s, "Independent", "Cloze", "Answers", f"{CODE}.16")
@@ -1160,27 +1084,20 @@ def build_slides(lesson: dict) -> bytes:
             ], 1.95, CONT_Y + 0.05 + i * row_h, 7.75, row_h,
                align="left", valign="middle", margin=0.03)
 
-    # ════════════════════════════════════════════════════════════════════════
-    # SLIDE 18 — Word Shed (blank)
-    # ════════════════════════════════════════════════════════════════════════
-
     def _word_shed_structure(s, show_answers=False):
-        """Shared structure for slides 18 and 19."""
         slide_num = f"{CODE}.{'18' if show_answers else '17'}"
         add_frame(s, "Independent", "Word Shed",
                   "Build everything you can around the base word.", slide_num)
 
-        # Brown frame inside the content area, leaving the school header visible
         FY = CONT_Y + 0.05
         FH = CONT_H - 0.10
         rect(s, 0.6, FY, 8.8, FH, "C4956A", "8B5E3C", 2)
         rect(s, 0.85, FY + 0.18, 8.3, FH - 0.36, C["WHITE"], "8B5E3C", 1)
 
-        # Centre dividers and central base-word badge
         cx_split = 5.0
         body_x_l = 0.85
         body_x_r = cx_split + 0.05
-        body_w = (cx_split - 0.05) - body_x_l  # ~4.10
+        body_w = (cx_split - 0.05) - body_x_l
         body_y_top = FY + 0.18
         body_y_bot = FY + FH - 0.18
         body_h = body_y_bot - body_y_top
@@ -1189,7 +1106,6 @@ def build_slides(lesson: dict) -> bytes:
         rect(s, cx_split - 0.02, body_y_top, 0.04, body_h, "AAAAAA")
         rect(s, body_x_l, mid_y - 0.02, (body_x_r + body_w) - body_x_l, 0.04, "AAAAAA")
 
-        # Central base word badge
         rect(s, cx_split - 1.1, mid_y - 0.28, 2.2, 0.56,
              C["WHITE"], C["BLACK"], 1.5)
         txt(s, lesson["wordShed"]["baseWord"],
@@ -1197,8 +1113,7 @@ def build_slides(lesson: dict) -> bytes:
             size=20, bold=True, color=C["BLACK"], align="center", margin=0)
 
         ws = lesson["wordShed"]
-        # Each quadrant: label at top, body below
-        bottom_label_y = mid_y + 0.32  # below the central badge
+        bottom_label_y = mid_y + 0.32
         quadrants = [
             ("Definition",                body_x_l, body_y_top + 0.05, body_w,
              ws["def"] if show_answers else ""),
@@ -1213,7 +1128,6 @@ def build_slides(lesson: dict) -> bytes:
             txt(s, label, lx, ly, lw, 0.30,
                 size=13, bold=True, color=C["BLACK"], align="left", valign="top", margin=0)
             if body_text:
-                # Bodies sit below their label; the upper row stops above the central badge
                 bx, bw = lx, lw
                 if ly < mid_y:
                     by = ly + 0.34
@@ -1228,22 +1142,14 @@ def build_slides(lesson: dict) -> bytes:
         s = prs.slides.add_slide(BLANK)
         _word_shed_structure(s, show_answers=False)
 
-    # ════════════════════════════════════════════════════════════════════════
-    # SLIDE 19 — Word Shed (answers)
-    # ════════════════════════════════════════════════════════════════════════
-
     def slide19():
         s = prs.slides.add_slide(BLANK)
         _word_shed_structure(s, show_answers=True)
 
-    # ════════════════════════════════════════════════════════════════════════
-    # SLIDE 20 — Morphology Matrix (blank)
-    # ════════════════════════════════════════════════════════════════════════
-
-    def _morph_matrix(s, show_answers=False):
+    def _morph_matrix(s, show_answers=False, sn_blank="19", sn_answers="20"):
         add_frame(s, "Whole Group", "Morphology Matrix",
                   "How many new words can you create by adding suffix(es)?",
-                  f"{CODE}.{'20' if show_answers else '19'}")
+                  f"{CODE}.{sn_answers if show_answers else sn_blank}")
 
         mm = lesson["morphMatrix"]
 
@@ -1277,23 +1183,1024 @@ def build_slides(lesson: dict) -> bytes:
 
     def slide20():
         s = prs.slides.add_slide(BLANK)
-        _morph_matrix(s, show_answers=False)
-
-    # ════════════════════════════════════════════════════════════════════════
-    # SLIDE 21 — Morphology Matrix (answers)
-    # ════════════════════════════════════════════════════════════════════════
+        _morph_matrix(s, show_answers=False, sn_blank="19", sn_answers="20")
 
     def slide21():
         s = prs.slides.add_slide(BLANK)
-        _morph_matrix(s, show_answers=True)
+        _morph_matrix(s, show_answers=True, sn_blank="19", sn_answers="20")
 
-    # ── Build all slides ──────────────────────────────────────────────────────
+    # ════════════════════════════════════════════════════════════════════════
+    # Y2 SLIDES
+    # ════════════════════════════════════════════════════════════════════════
 
-    slide1();  slide_key_spelling();  slide2();  slide3();  slide4();  slide5();  slide6();  slide7()
-    slide8();  slide9();  slide10(); slide11(); slide12(); slide13(); slide14()
-    slide15(); slide16(); slide17(); slide18(); slide19(); slide20(); slide21()
+    def slide_y2_starter():
+        """Y2 Starter: written word clues, click-reveal answers."""
+        starter = lesson.get("y2Starter", {})
+        clues = starter.get("clues", [])
+        question = starter.get("question", "Which of last week's words is being described?")
 
-    # Apply click-reveal animations to registered slides
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Whole Group", "Starter", question, f"{CODE}.1")
+
+        cell_w = 9.0 / 3
+        cell_h = 1.55
+        sx, sy = 0.5, CONT_Y + 0.18
+
+        click_groups = []
+        for i, item in enumerate(clues[:6]):
+            col, row = i % 3, i // 3
+            x = sx + col * cell_w
+            y = sy + row * cell_h
+            # Clue box
+            rect(s, x + 0.06, y, cell_w - 0.12, 0.88, "F0F4FF", C["BLUE"], 0.8, radius=0.08)
+            txt(s, item.get("clue", ""), x + 0.12, y + 0.04, cell_w - 0.24, 0.80,
+                size=13, color=C["BLACK"], align="center", valign="middle")
+            # Answer (hidden, click-reveal)
+            ans_shape = txt(s, item.get("word", ""), x, y + 0.95, cell_w, 0.48,
+                size=28, bold=True, color=C["PINK"], align="center")
+            click_groups.append([ans_shape])
+
+        register_clicks(s, *click_groups)
+
+    def slide_y2_spelling_pattern():
+        """Y2 Spelling Pattern: rule explanation with examples."""
+        sp = lesson.get("spellingPattern", {})
+        title = sp.get("title", lesson.get("rule", "Spelling Pattern"))
+        body  = sp.get("body", "")
+        examples = sp.get("examples", [])[:3]
+
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Whole Group", "Spelling Pattern", title, f"{CODE}.3")
+
+        txt(s, body, 0.5, CONT_Y + 0.18, 9.0, 0.75,
+            size=17, color=C["BLACK"], align="center", valign="middle")
+
+        if examples:
+            n = len(examples)
+            bw = (9.0 - 0.3 * (n - 1)) / n
+            ex_y = CONT_Y + 1.05
+            ex_h = 2.85
+
+            click_shapes = []
+            for i, ex in enumerate(examples):
+                x = 0.5 + i * (bw + 0.3)
+                rect(s, x, ex_y, bw, ex_h, C["WHITE"], C["BLUE"], 1.5, radius=0.1)
+
+                inp = ex.get("input", ex.get("base", ""))
+                out = ex.get("output", ex.get("result", ""))
+                note = ex.get("note", "")
+
+                if inp:
+                    txt(s, inp, x + 0.08, ex_y + 0.12, bw - 0.16, 0.55,
+                        size=26, color=C["BLACK"], align="center")
+                    txt(s, "↓", x, ex_y + 0.72, bw, 0.35,
+                        size=22, color=C["GREY"], align="center")
+
+                out_shape = txt(s, out, x + 0.08, ex_y + 1.12, bw - 0.16, 0.65,
+                    size=28, bold=True, color=C["PINK"], align="center")
+                click_shapes.append(out_shape)
+
+                if note:
+                    note_shape = txt(s, note, x + 0.1, ex_y + 1.85, bw - 0.2, 0.85,
+                        size=12, italic=True, color=C["GREY"], align="center", valign="top")
+                    click_shapes.append(note_shape)
+
+            register_clicks(s, click_shapes)
+
+    def slide_y2_morph_matrix_blank():
+        s = prs.slides.add_slide(BLANK)
+        _morph_matrix(s, show_answers=False, sn_blank="4a", sn_answers="4b")
+
+    def slide_y2_morph_matrix_answers():
+        s = prs.slides.add_slide(BLANK)
+        _morph_matrix(s, show_answers=True, sn_blank="4a", sn_answers="4b")
+
+    def slide_y2_word_sort_blank():
+        """Y2 Word Sort (blank) — same as Y4 slide7 but with Y2 slide number."""
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Whole Group", "Word Sort", lesson["wordSortQ"], f"{CODE}.4")
+
+        for ri, row_words in enumerate([WORDS[:5], WORDS[5:]]):
+            txt(s, "          ".join(row_words),
+                0.5, CONT_Y + 0.15 + ri * 0.5, 9.0, 0.48,
+                size=22, color=C["BLACK"], align="center")
+
+        BOX_Y, BOX_H = CONT_Y + 1.3, 2.05
+        ws = lesson["wordSort"]
+        rect(s, 0.35, BOX_Y, 4.45, BOX_H, C["WHITE"], C["PURPLE"], 3, radius=0.15)
+        txt(s, ws["box1label"] + "\n" + ws["box1sub"],
+            0.45, BOX_Y + 0.08, 4.25, 0.75,
+            size=16, bold=True, color=C["PURPLE"], align="center")
+        rect(s, 5.2, BOX_Y, 4.45, BOX_H, C["WHITE"], C["GREEN_S"], 3, radius=0.15)
+        txt(s, ws["box2label"] + "\n" + ws["box2sub"],
+            5.3, BOX_Y + 0.08, 4.25, 0.75,
+            size=16, bold=True, color=C["GREEN_S"], align="center")
+        txt(s, ws["hint"], 0.5, BOX_Y + BOX_H + 0.12, 9.0, 0.32,
+            size=12, italic=True, color=C["GREY"], align="center")
+
+    def slide_y2_word_sort_answers():
+        """Y2 Word Sort answers — same as Y4 slide8 but with Y2 slide number."""
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Whole Group", "Word Sort", "Answers", f"{CODE}.5")
+
+        ws = lesson["wordSort"]
+        txt(s, ws["answerNote"], 0.5, CONT_Y + 0.08, 9.0, 0.38,
+            size=14, color=C["BLACK"], align="center")
+
+        BOX_Y, BOX_H = CONT_Y + 0.55, 3.05
+        verb_only = ws["verbOnly"]
+        verb_noun = ws["verbNoun"]
+
+        rect(s, 0.35, BOX_Y, 4.45, BOX_H, C["WHITE"], C["PURPLE"], 3, radius=0.15)
+        txt(s, ws["box1label"] + "  " + ws["box1sub"],
+            0.45, BOX_Y + 0.08, 4.25, 0.35,
+            size=14, bold=True, color=C["PURPLE"], align="center")
+        if verb_only:
+            available_h = BOX_H - 0.50 - 0.10
+            row_h  = min(0.52, available_h / len(verb_only))
+            font_s = max(9, min(13, int(row_h * 22)))
+            for i, w in enumerate(verb_only):
+                txt(s, w, 0.55, BOX_Y + 0.50 + i * row_h, 4.15, row_h,
+                    size=font_s, bold=True, color=C["PINK"], align="center")
+
+        rect(s, 5.2, BOX_Y, 4.45, BOX_H, C["WHITE"], C["GREEN_S"], 3, radius=0.15)
+        txt(s, ws["box2label"], 5.3, BOX_Y + 0.08, 4.25, 0.35,
+            size=14, bold=True, color=C["GREEN_S"], align="center")
+        if verb_noun:
+            available_h = BOX_H - 0.47 - 0.10
+            row_h  = min(0.362, available_h / len(verb_noun))
+            font_w = max(9, min(12, int(row_h * 28)))
+            font_eg = max(8, font_w - 2)
+            for i, item in enumerate(verb_noun):
+                rich_txt(s, [
+                    (item["word"], {"size": font_w, "bold": True, "color": C["PINK"]}),
+                    ("  " + item["eg"], {"size": font_eg, "italic": True, "color": C["GREY"]}),
+                ], 5.4, BOX_Y + 0.47 + i * row_h, 4.15, row_h, valign="middle")
+
+        txt(s, ws["exampleLine"], 0.5, BOX_Y + BOX_H + 0.12, 9.0, 0.30,
+            size=12, color=C["BLACK"], align="center")
+
+    def slide_y2_sound_it_squash_it():
+        """Y2 Sound It, Squash It, Say It, Scribe It — worked examples with sound buttons."""
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Whole Group", "Sound It, Squash It, Say It, Scribe It",
+                  "Can you sound out and write the words? Can you add the sound buttons underneath?",
+                  f"{CODE}.6")
+
+        txt(s, "Use a dot ● for each single letter sound and a line — when two or more letters make one sound.",
+            0.5, CONT_Y + 0.12, 9.0, 0.30,
+            size=12, italic=True, color=C["GREY"], align="center")
+
+        example_words = WORDS[:4]
+        n_ex = len(example_words)
+        cw = 9.0 / n_ex
+        sy = CONT_Y + 0.52
+        syllables = lesson.get("wordMaps", {}).get("syllables", {})
+        fs = min(fit_font(w, cw, 32, 20) for w in example_words)
+
+        for i, w in enumerate(example_words):
+            x  = 0.5 + i * cw
+            cx = x + cw / 2
+            txt(s, w, x, sy, cw, 0.72,
+                size=fs, color=C["PINK"], align="center")
+            draw_sound_buttons(s, w, cx, sy + 0.80, 22)
+            brk = syllables.get(w, "")
+            if brk:
+                txt(s, brk, x, sy + 1.68, cw, 0.28,
+                    size=12, italic=True, color=C["GREY"], align="center")
+
+        # Practice boxes for next 2 words
+        practice_words = WORDS[4:6] if len(WORDS) > 4 else []
+        if practice_words:
+            txt(s, "Now try these:", 0.5, CONT_Y + 2.62, 3.0, 0.28,
+                size=13, bold=True, color=C["BLUE"], align="left")
+            pw = 4.2
+            for i, w in enumerate(practice_words):
+                px = 0.5 + i * (pw + 0.15)
+                rect(s, px, CONT_Y + 2.98, pw, 1.05, C["WHITE"], C["GREY"], 0.8, radius=0.06)
+                txt(s, w, px, CONT_Y + 3.02, pw, 0.40,
+                    size=24, color=C["BLACK"], align="center")
+                txt(s, "(add sound buttons below)", px, CONT_Y + 3.46, pw, 0.28,
+                    size=10, italic=True, color=C["GREY"], align="center")
+
+    def slide_y2_phoneme_maps_blank():
+        """Y2 Phoneme Maps — symbols only, word hidden."""
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Independent", "Phoneme Maps",
+                  "Look at the phoneme maps. Write the matching word next to each map.",
+                  f"{CODE}.7")
+
+        txt(s, "Each ● = one sound.  Each — = two or more letters making one sound.",
+            0.5, CONT_Y + 0.10, 9.0, 0.25,
+            size=11, italic=True, color=C["GREY"], align="center")
+
+        # 5 words per column, 2 columns
+        col_x = [0.55, 5.1]
+        row_h = (CONT_H - 0.55) / 5
+        sym_w = 3.2   # width of symbol area
+        lbl_w = 1.5   # width of write-word area
+        scale = 1.0
+
+        for i, w in enumerate(WORDS[:10]):
+            col = i // 5
+            row = i % 5
+            x   = col_x[col]
+            y   = CONT_Y + 0.42 + row * row_h
+            cx  = x + sym_w / 2
+            sym_y = y + (row_h - 0.07) / 2
+
+            draw_phoneme_symbols_only(s, w, cx, sym_y, scale=scale)
+
+            # Writing line for the word
+            rect(s, x + sym_w + 0.12, y + row_h * 0.28, lbl_w, 0.03, C["GREY"])
+            txt(s, "_____________", x + sym_w + 0.12, y + row_h * 0.05, lbl_w, row_h * 0.6,
+                size=13, color="CCCCCC", align="left", valign="bottom")
+
+    def slide_y2_phoneme_maps_answers():
+        """Y2 Phoneme Maps answers — word shown next to each symbol set."""
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Whole Group", "Phoneme Maps", "Answers", f"{CODE}.8")
+
+        txt(s, "Each ● = one sound.  Each — = two or more letters making one sound.",
+            0.5, CONT_Y + 0.10, 9.0, 0.25,
+            size=11, italic=True, color=C["GREY"], align="center")
+
+        col_x = [0.55, 5.1]
+        row_h = (CONT_H - 0.55) / 5
+        sym_w = 3.2
+        lbl_w = 1.5
+        scale = 1.0
+
+        click_shapes = []
+        for i, w in enumerate(WORDS[:10]):
+            col = i // 5
+            row = i % 5
+            x   = col_x[col]
+            y   = CONT_Y + 0.42 + row * row_h
+            cx  = x + sym_w / 2
+            sym_y = y + (row_h - 0.07) / 2
+
+            draw_phoneme_symbols_only(s, w, cx, sym_y, scale=scale)
+
+            ans_shape = txt(s, w, x + sym_w + 0.12, y + row_h * 0.08,
+                lbl_w, row_h * 0.82,
+                size=16, bold=True, color=C["PINK"], align="left", valign="middle")
+            click_shapes.append(ans_shape)
+
+        register_clicks(s, click_shapes)
+
+    def slide_y2_sentences_synonyms_blank():
+        """Y2 Sentences and Synonyms — synonym replacement task (blank)."""
+        sns = lesson.get("sentencesAndSynonyms", [])[:4]
+
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Independent", "Sentences and Synonyms",
+                  "Read each sentence. Replace the underlined word with one from the word bank.",
+                  f"{CODE}.9")
+
+        # Word bank at top in blue
+        wb_y = CONT_Y + 0.12
+        txt(s, "Word bank:", 0.5, wb_y, 1.4, 0.32,
+            size=13, bold=True, color=C["BLUE"], align="left")
+        txt(s, "   ".join(WORDS), 1.9, wb_y, 7.6, 0.32,
+            size=13, bold=True, color=C["BLUE"], align="left")
+
+        # Sentence pairs in 2x2 grid
+        grid_y = CONT_Y + 0.55
+        cw, rh = 4.55, 1.72
+        for i, item in enumerate(sns):
+            col, row = i % 2, i // 2
+            x = 0.35 + col * (cw + 0.25)
+            y = grid_y + row * (rh + 0.10)
+            rect(s, x, y, cw, rh, C["WHITE"], "CCCCCC", 0.8, radius=0.06)
+
+            original = item.get("original", "")
+            underlined = item.get("underlined", "")
+
+            # Split sentence around underlined word
+            idx = original.find(underlined)
+            if idx != -1:
+                before = original[:idx]
+                after  = original[idx + len(underlined):]
+                rich_txt(s, [
+                    (before,      {"size": 12, "color": C["BLACK"]}),
+                    (underlined,  {"size": 12, "color": C["BLACK"], "bold": True}),
+                    (after,       {"size": 12, "color": C["BLACK"]}),
+                ], x + 0.12, y + 0.08, cw - 0.24, 0.65,
+                   align="left", valign="top", margin=0.02)
+            else:
+                txt(s, original, x + 0.12, y + 0.08, cw - 0.24, 0.65,
+                    size=12, color=C["BLACK"], align="left", valign="top")
+
+            txt(s, f"Replace the word in bold with: ______________",
+                x + 0.12, y + 0.80, cw - 0.24, 0.38,
+                size=11, color=C["GREY"], align="left")
+
+    def slide_y2_sentences_synonyms_answers():
+        """Y2 Sentences and Synonyms answers."""
+        sns = lesson.get("sentencesAndSynonyms", [])[:4]
+
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Whole Group", "Sentences and Synonyms", "Answers", f"{CODE}.10")
+
+        txt(s, "Word bank:", 0.5, CONT_Y + 0.12, 1.4, 0.32,
+            size=13, bold=True, color=C["BLUE"], align="left")
+        txt(s, "   ".join(WORDS), 1.9, CONT_Y + 0.12, 7.6, 0.32,
+            size=13, bold=True, color=C["BLUE"], align="left")
+
+        grid_y = CONT_Y + 0.55
+        cw, rh = 4.55, 1.72
+        click_shapes = []
+        for i, item in enumerate(sns):
+            col, row = i % 2, i // 2
+            x = 0.35 + col * (cw + 0.25)
+            y = grid_y + row * (rh + 0.10)
+            rect(s, x, y, cw, rh, C["WHITE"], "CCCCCC", 0.8, radius=0.06)
+
+            original = item.get("original", "")
+            underlined = item.get("underlined", "")
+            answer = item.get("answer", "")
+
+            idx = original.find(underlined)
+            if idx != -1:
+                before = original[:idx]
+                after  = original[idx + len(underlined):]
+                rich_txt(s, [
+                    (before,     {"size": 12, "color": C["BLACK"]}),
+                    (underlined, {"size": 12, "color": C["BLACK"], "bold": True}),
+                    (after,      {"size": 12, "color": C["BLACK"]}),
+                ], x + 0.12, y + 0.08, cw - 0.24, 0.65,
+                   align="left", valign="top", margin=0.02)
+            else:
+                txt(s, original, x + 0.12, y + 0.08, cw - 0.24, 0.65,
+                    size=12, color=C["BLACK"], align="left", valign="top")
+
+            ans_shape = txt(s, f"→  {answer}", x + 0.12, y + 0.82, cw - 0.24, 0.52,
+                size=18, bold=True, color=C["PINK"], align="left", valign="middle")
+            click_shapes.append(ans_shape)
+
+        register_clicks(s, click_shapes)
+
+    def slide_y2_words_in_action_blank():
+        """Y2 Words in Action — creative writing prompt."""
+        wia = lesson.get("wordsInAction", {})
+        prompt = wia.get("prompt", "Can you write a description of this picture?")
+        pic_prompt = wia.get("picture_prompt", "")
+        req_words = wia.get("required_words", WORDS[:3])
+
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Independent", "Words in Action", prompt, f"{CODE}.11")
+
+        # Picture frame (left side)
+        rect(s, 0.35, CONT_Y + 0.18, 5.2, 3.55, "F9F9F9", C["GREY"], 0.8)
+        txt(s, "🖼", 0.35, CONT_Y + 0.22, 5.2, 0.55,
+            size=28, color=C["GREY"], align="center")
+        txt(s, pic_prompt, 0.5, CONT_Y + 0.82, 4.9, 2.85,
+            size=13, italic=True, color=C["GREY"], align="center", valign="top")
+
+        # Required words (right side)
+        txt(s, "Words to include:", 5.75, CONT_Y + 0.22, 3.9, 0.35,
+            size=14, bold=True, color=C["BLUE"], align="left")
+        for i, w in enumerate(req_words):
+            txt(s, w, 5.75, CONT_Y + 0.65 + i * 0.52, 3.9, 0.45,
+                size=22, bold=True, color=C["PINK"], align="left")
+
+    def slide_y2_words_in_action_answers():
+        """Y2 Words in Action answers — possible answer shown."""
+        wia = lesson.get("wordsInAction", {})
+        prompt = wia.get("prompt", "Can you write a description of this picture?")
+        req_words = wia.get("required_words", WORDS[:3])
+        sample = wia.get("sample_answer", "")
+
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Whole Group", "Words in Action",
+                  "Possible answer — pupils' answers will vary!", f"{CODE}.12")
+
+        if sample:
+            txt(s, sample, 0.5, CONT_Y + 0.25, 9.0, 3.0,
+                size=16, color=C["BLACK"], align="left", valign="top")
+
+            # Highlight the required words
+            txt(s, "Required words used:  " + "   ".join(req_words),
+                0.5, CONT_Y + 3.45, 9.0, 0.35,
+                size=13, bold=True, color=C["PINK"], align="center")
+        else:
+            txt(s, "Pupils write their own description using the required words.",
+                0.5, CONT_Y + 1.5, 9.0, 0.5,
+                size=16, italic=True, color=C["GREY"], align="center")
+            txt(s, "Words to use:  " + "   ".join(req_words),
+                0.5, CONT_Y + 2.2, 9.0, 0.45,
+                size=18, bold=True, color=C["PINK"], align="center")
+
+    def slide_y2_word_spotter():
+        """Y2 Word Spotter — 4x4 grid, clap for this week's words."""
+        distractors = lesson.get("wordSpotter", {}).get("distractors", [])
+
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Whole Group", "Word Spotter",
+                  "Clap your hands when you see one of this week's words.", f"{CODE}.13")
+
+        all_words = list(WORDS) + list(distractors[:6])
+        # Shuffle with fixed seed for reproducibility
+        rng = random.Random(42)
+        rng.shuffle(all_words)
+        # Pad or trim to exactly 16
+        while len(all_words) < 16:
+            all_words.append(all_words[0])
+        all_words = all_words[:16]
+
+        this_week_set = set(WORDS)
+        COLS, ROWS = 4, 4
+        cell_w = 9.0 / COLS
+        cell_h = (CONT_H - 0.2) / ROWS
+        sx, sy = 0.5, CONT_Y + 0.1
+
+        for i, w in enumerate(all_words):
+            col, row = i % COLS, i // COLS
+            x = sx + col * cell_w
+            y = sy + row * cell_h
+            is_this_week = w in this_week_set
+            bg = "FFF0F5" if is_this_week else C["WHITE"]
+            border = C["PINK"] if is_this_week else "CCCCCC"
+            lw = 1.5 if is_this_week else 0.5
+            rect(s, x + 0.05, y + 0.05, cell_w - 0.1, cell_h - 0.1, bg, border, lw, radius=0.08)
+            txt(s, w, x + 0.05, y + 0.05, cell_w - 0.1, cell_h - 0.1,
+                size=18, color=C["BLACK"], align="center", valign="middle")
+
+    def slide_y2_continuous_provision():
+        """Y2 Continuous Provision — word cards with phoneme symbols."""
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Optional", "Continuous Provision",
+                  "Word cards for independent learning", f"{CODE}.14")
+
+        COLS, ROWS = 5, 2
+        cw = 9.2 / COLS
+        ch = (CONT_H - 0.15) / ROWS
+        sx, sy = 0.4, CONT_Y + 0.08
+
+        for i, w in enumerate(WORDS[:10]):
+            col, row = i % COLS, i // COLS
+            x = sx + col * cw
+            y = sy + row * ch
+            rect(s, x + 0.04, y + 0.04, cw - 0.08, ch - 0.08,
+                 C["WHITE"], "CCCCCC", 0.6, radius=0.08)
+            word_h = ch * 0.48
+            sym_h  = ch * 0.38
+            txt(s, w, x + 0.06, y + 0.06, cw - 0.12, word_h,
+                size=min(fit_font(w, cw, 24, 14), 22),
+                color=C["BLACK"], align="center", valign="middle")
+            cx = x + cw / 2
+            draw_phoneme_symbols_only(s, w, cx, y + word_h + 0.08, scale=0.9)
+
+    # ════════════════════════════════════════════════════════════════════════
+    # Y3 SLIDES
+    # ════════════════════════════════════════════════════════════════════════
+
+    def slide_y3_starter_blank():
+        """Y3 Starter: sorting mat (blank)."""
+        starter = lesson.get("y3Starter", {})
+        question = starter.get("question", "Can you sort the words based on their suffix?")
+        categories = starter.get("categories", [])
+        words_data = starter.get("last_week_words", [])
+
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Whole Group", "Sorting Mat", question, f"{CODE}.1")
+
+        if not categories or not words_data:
+            txt(s, "Sort last week's words into the correct categories.",
+                0.5, CONT_Y + 1.5, 9.0, 0.5,
+                size=16, color=C["BLACK"], align="center")
+            return
+
+        n_cats = len(categories)
+        cat_w  = (9.0 - 0.3) / n_cats
+        hdr_y  = CONT_Y + 0.15
+        hdr_h  = 0.45
+        body_y = hdr_y + hdr_h + 0.08
+        body_h = CONT_H - hdr_h - 0.32
+
+        cat_colors = [C["PURPLE"], C["GREEN_S"], C["BLUE"], C["PINK"]]
+
+        for ci, cat in enumerate(categories):
+            cx = 0.5 + ci * (cat_w + 0.1)
+            color = cat_colors[ci % len(cat_colors)]
+            rect(s, cx, hdr_y, cat_w, hdr_h, color, color, 0)
+            txt(s, cat, cx, hdr_y, cat_w, hdr_h,
+                size=20, bold=True, color=C["WHITE"], align="center", margin=0)
+            rect(s, cx, body_y, cat_w, body_h, C["WHITE"], color, 1.5, radius=0.08)
+
+        # Word bank below header in a separate area
+        all_wds = [item.get("word", "") for item in words_data]
+        txt(s, "Words to sort: " + "  |  ".join(all_wds),
+            0.5, BAR_Y - 0.42, 9.0, 0.30,
+            size=12, color=C["BLACK"], align="center")
+
+    def slide_y3_starter_answers():
+        """Y3 Starter: sorting mat answers (click-reveal groups by category)."""
+        starter = lesson.get("y3Starter", {})
+        question = starter.get("question", "Can you sort the words based on their suffix?")
+        categories = starter.get("categories", [])
+        words_data = starter.get("last_week_words", [])
+
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Whole Group", "Sorting Mat", "Answers", f"{CODE}.2")
+
+        if not categories or not words_data:
+            return
+
+        n_cats = len(categories)
+        cat_w  = (9.0 - 0.3) / n_cats
+        hdr_y  = CONT_Y + 0.15
+        hdr_h  = 0.45
+        body_y = hdr_y + hdr_h + 0.08
+        body_h = CONT_H - hdr_h - 0.32
+
+        cat_colors = [C["PURPLE"], C["GREEN_S"], C["BLUE"], C["PINK"]]
+
+        for ci, cat in enumerate(categories):
+            cx = 0.5 + ci * (cat_w + 0.1)
+            color = cat_colors[ci % len(cat_colors)]
+            rect(s, cx, hdr_y, cat_w, hdr_h, color, color, 0)
+            txt(s, cat, cx, hdr_y, cat_w, hdr_h,
+                size=20, bold=True, color=C["WHITE"], align="center", margin=0)
+            rect(s, cx, body_y, cat_w, body_h, C["WHITE"], color, 1.5, radius=0.08)
+
+            cat_words = [item.get("word", "") for item in words_data
+                        if item.get("category", "") == cat]
+            n = len(cat_words)
+            if n:
+                row_h = min(0.48, (body_h - 0.12) / n)
+                click_batch = []
+                for ri, w in enumerate(cat_words):
+                    ws = txt(s, w, cx + 0.08, body_y + 0.08 + ri * row_h,
+                        cat_w - 0.16, row_h,
+                        size=max(12, min(18, int(row_h * 28))),
+                        bold=True, color=C["PINK"], align="center", valign="middle")
+                    click_batch.append(ws)
+                register_clicks(s, click_batch)
+
+    def slide_y3_this_weeks_words():
+        """Y3 This Week's Words — same layout as Y4 but Y3 slide number."""
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Whole Group", "This Week's Words",
+                  lesson["thisWeeksWordsQ"], f"{CODE}.3")
+
+        cell_w = 9.0 / 5
+        fs = min(fit_font(w, cell_w, 32, 18) for w in WORDS)
+        for ri, row_words in enumerate([WORDS[:5], WORDS[5:]]):
+            for ci, w in enumerate(row_words):
+                x = 0.5 + ci * cell_w
+                y = CONT_Y + 0.3 + ri * 1.30
+                txt(s, w, x, y, cell_w, 0.85,
+                    size=fs, color=C["BLACK"], align="center", valign="bottom")
+                rect(s, x + 0.3, y + 0.92, cell_w - 0.6, 0.06, C["PINK"])
+
+        prompt_shape = txt(s, lesson["thisWeeksWordsPrompt"],
+            0.5, CONT_Y + 3.05, 4.3, 0.4,
+            size=15, bold=True, color=C["BLUE"], align="left")
+        explanation_shape = txt(s, lesson["thisWeeksWordsExplanation"],
+            4.8, CONT_Y + 3.05, 4.8, 0.55,
+            size=14, color=C["BLACK"], align="left")
+        register_clicks(s, prompt_shape, explanation_shape)
+
+    def slide_y3_spelling_pattern():
+        """Y3 Spelling Pattern — rule explanation with transformation examples."""
+        sp = lesson.get("spellingPattern", {})
+        title    = sp.get("title", lesson.get("rule", "Spelling Pattern"))
+        body     = sp.get("body", "")
+        rule_note = sp.get("rule_note", "")
+        examples = sp.get("examples", [])[:3]
+
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Whole Group", "Spelling Pattern", title, f"{CODE}.4")
+
+        txt(s, body, 0.5, CONT_Y + 0.14, 9.0, 0.62,
+            size=16, color=C["BLACK"], align="center", valign="middle")
+
+        if examples:
+            n = len(examples)
+            bw = (9.0 - 0.25 * (n - 1)) / n
+            ex_y = CONT_Y + 0.90
+            ex_h = 2.70
+
+            for i, ex in enumerate(examples):
+                x = 0.5 + i * (bw + 0.25)
+                rect(s, x, ex_y, bw, ex_h, C["WHITE"], C["BLUE"], 1.5, radius=0.10)
+
+                base   = ex.get("base", ex.get("input", ""))
+                result = ex.get("result", ex.get("output", ""))
+                note   = ex.get("note", "")
+
+                if base:
+                    txt(s, base, x + 0.1, ex_y + 0.12, bw - 0.2, 0.50,
+                        size=24, color=C["BLACK"], align="center")
+                    txt(s, "↓", x, ex_y + 0.66, bw, 0.32,
+                        size=20, color=C["GREY"], align="center")
+                txt(s, result, x + 0.1, ex_y + 1.02, bw - 0.2, 0.58,
+                    size=26, bold=True, color=C["PINK"], align="center")
+                if note:
+                    txt(s, note, x + 0.12, ex_y + 1.68, bw - 0.24, 0.90,
+                        size=12, italic=True, color=C["GREY"], align="center", valign="top")
+
+        if rule_note:
+            txt(s, rule_note, 0.5, BAR_Y - 0.42, 9.0, 0.30,
+                size=12, italic=True, color=C["GREY"], align="center")
+
+    def slide_y3_etymology_simple():
+        """Y3 Etymology — simplified single-slide version, not a guessing game."""
+        etym = lesson.get("etymology", {})
+        clicks = etym.get("clicks", [])
+        base   = etym.get("baseForm", etym.get("word", ""))
+
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Whole Group", "Etymology",
+                  f"Where does the word '{base}' come from?", f"{CODE}.5")
+
+        # Show the word prominently
+        txt(s, base, 0.5, CONT_Y + 0.08, 9.0, 0.72,
+            size=52, bold=True, color=C["PINK"], align="center")
+
+        # Show up to 3 etymology fact panels
+        panels = clicks[:3] if len(clicks) >= 3 else clicks
+        n = len(panels)
+        if n:
+            pw = (9.0 - 0.15 * (n - 1)) / n
+            py = CONT_Y + 0.90
+            ph = 2.55
+
+            for i, card in enumerate(panels):
+                x = 0.5 + i * (pw + 0.15)
+                rect(s, x, py, pw, ph, C["WHITE"], C["BLUE"], 1.5, radius=0.10)
+                lbl  = card.get("label", "")
+                body = card.get("body", "")
+                if lbl:
+                    txt(s, lbl, x + 0.08, py + 0.10, pw - 0.16, 0.38,
+                        size=13, bold=True, color=C["BLUE"], align="center")
+                txt(s, body, x + 0.10, py + 0.52, pw - 0.20, ph - 0.62,
+                    size=12, color=C["BLACK"], align="center", valign="top")
+
+        # Fun fact (click 4 or 5 if present)
+        if len(clicks) > 3:
+            extra = clicks[3]
+            txt(s, extra.get("label", "") + ": " + extra.get("body", ""),
+                0.5, BAR_Y - 0.42, 9.0, 0.30,
+                size=11, italic=True, color=C["GREY"], align="center")
+
+    def slide_y3_morph_matrix_blank():
+        s = prs.slides.add_slide(BLANK)
+        _morph_matrix(s, show_answers=False, sn_blank="6", sn_answers="7")
+
+    def slide_y3_morph_matrix_answers():
+        s = prs.slides.add_slide(BLANK)
+        _morph_matrix(s, show_answers=True, sn_blank="6", sn_answers="7")
+
+    def slide_y3_word_sort_blank():
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Whole Group", "Word Sort", lesson["wordSortQ"], f"{CODE}.8")
+        for ri, row_words in enumerate([WORDS[:5], WORDS[5:]]):
+            txt(s, "          ".join(row_words),
+                0.5, CONT_Y + 0.15 + ri * 0.5, 9.0, 0.48,
+                size=22, color=C["BLACK"], align="center")
+        BOX_Y, BOX_H = CONT_Y + 1.3, 2.05
+        ws = lesson["wordSort"]
+        rect(s, 0.35, BOX_Y, 4.45, BOX_H, C["WHITE"], C["PURPLE"], 3, radius=0.15)
+        txt(s, ws["box1label"] + "\n" + ws["box1sub"],
+            0.45, BOX_Y + 0.08, 4.25, 0.75,
+            size=16, bold=True, color=C["PURPLE"], align="center")
+        rect(s, 5.2, BOX_Y, 4.45, BOX_H, C["WHITE"], C["GREEN_S"], 3, radius=0.15)
+        txt(s, ws["box2label"] + "\n" + ws["box2sub"],
+            5.3, BOX_Y + 0.08, 4.25, 0.75,
+            size=16, bold=True, color=C["GREEN_S"], align="center")
+        txt(s, ws["hint"], 0.5, BOX_Y + BOX_H + 0.12, 9.0, 0.32,
+            size=12, italic=True, color=C["GREY"], align="center")
+
+    def slide_y3_word_sort_answers():
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Whole Group", "Word Sort", "Answers", f"{CODE}.9")
+        ws = lesson["wordSort"]
+        txt(s, ws["answerNote"], 0.5, CONT_Y + 0.08, 9.0, 0.38,
+            size=14, color=C["BLACK"], align="center")
+        BOX_Y, BOX_H = CONT_Y + 0.55, 3.05
+        verb_only = ws["verbOnly"]
+        verb_noun = ws["verbNoun"]
+        rect(s, 0.35, BOX_Y, 4.45, BOX_H, C["WHITE"], C["PURPLE"], 3, radius=0.15)
+        txt(s, ws["box1label"] + "  " + ws["box1sub"],
+            0.45, BOX_Y + 0.08, 4.25, 0.35,
+            size=14, bold=True, color=C["PURPLE"], align="center")
+        if verb_only:
+            available_h = BOX_H - 0.50 - 0.10
+            row_h  = min(0.52, available_h / len(verb_only))
+            font_s = max(9, min(13, int(row_h * 22)))
+            for i, w in enumerate(verb_only):
+                txt(s, w, 0.55, BOX_Y + 0.50 + i * row_h, 4.15, row_h,
+                    size=font_s, bold=True, color=C["PINK"], align="center")
+        rect(s, 5.2, BOX_Y, 4.45, BOX_H, C["WHITE"], C["GREEN_S"], 3, radius=0.15)
+        txt(s, ws["box2label"], 5.3, BOX_Y + 0.08, 4.25, 0.35,
+            size=14, bold=True, color=C["GREEN_S"], align="center")
+        if verb_noun:
+            available_h = BOX_H - 0.47 - 0.10
+            row_h  = min(0.362, available_h / len(verb_noun))
+            font_w = max(9, min(12, int(row_h * 28)))
+            font_eg = max(8, font_w - 2)
+            for i, item in enumerate(verb_noun):
+                rich_txt(s, [
+                    (item["word"], {"size": font_w, "bold": True, "color": C["PINK"]}),
+                    ("  " + item["eg"], {"size": font_eg, "italic": True, "color": C["GREY"]}),
+                ], 5.4, BOX_Y + 0.47 + i * row_h, 4.15, row_h, valign="middle")
+        txt(s, ws["exampleLine"], 0.5, BOX_Y + BOX_H + 0.12, 9.0, 0.30,
+            size=12, color=C["BLACK"], align="center")
+
+    def slide_y3_sound_buttons_syllables():
+        """Y3 Sound Buttons and Syllables — worked examples, same as Y4 slide9 but Y3 number."""
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Whole Group", "Sound Buttons and Syllables",
+                  "How to mark the sound buttons and syllable breaks", f"{CODE}.10")
+
+        map_words = lesson["wordMaps"]["words"][:3]
+        syllables = lesson["wordMaps"]["syllables"]
+        sc        = lesson["syllableCounts"]
+        cw, sx, sy = 2.9, 0.5, CONT_Y + 0.25
+        fs = min(fit_font(w, cw, 36, 18) for w in map_words)
+
+        for i, w in enumerate(map_words):
+            x  = sx + i * (cw + 0.25)
+            cx = x + cw / 2
+            brk = syllables.get(w, w)
+            n   = sc.get(w, 1)
+            txt(s, w, x, sy, cw, 0.7, size=fs, color=C["PINK"], align="center")
+            txt(s, "Syllable Breaks", x, sy + 0.75, cw, 0.3,
+                size=12, bold=True, color=C["BLUE"], align="center")
+            rect(s, x, sy + 1.08, cw, 0.5, C["WHITE"], C["BLUE"], 1.5)
+            txt(s, brk, x, sy + 1.08, cw, 0.5, size=20, color=C["BLACK"],
+                align="center", margin=0)
+            txt(s, f"{n} syllable{'s' if n > 1 else ''}",
+                x, sy + 1.62, cw, 0.28, size=12, italic=True, color=C["GREY"], align="center")
+            txt(s, "Sound Buttons", x, sy + 1.95, cw, 0.3,
+                size=12, bold=True, color=C["PINK"], align="center")
+            draw_sound_buttons(s, w, cx, sy + 2.32, 22)
+            txt(s, "● = single sound   — = letters making one sound",
+                x, sy + 2.88, cw, 0.22, size=9, italic=True, color=C["GREY"], align="center")
+
+    def slide_y3_word_maps_blank():
+        """Y3 Word Maps blank — same 4-column layout as Y4, Y3 slide number."""
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Independent", "Word Maps",
+                  "Read the word. Write syllable breaks and sound buttons. Rewrite the word.",
+                  f"{CODE}.11")
+        map_words = lesson["wordMaps"]["words"]
+        hdr = [
+            {"text": "Words",           "bold": True, "fill": C["WHITE"], "align": "center"},
+            {"text": "Syllable Breaks", "bold": True, "fill": C["WHITE"], "align": "center"},
+            {"text": "Sound Buttons",   "bold": True, "fill": C["WHITE"], "align": "center"},
+            {"text": "My Word",         "bold": True, "fill": C["WHITE"], "align": "center"},
+        ]
+        rows = [
+            [{"text": w, "fill": C["WHITE"], "align": "center", "size": 18},
+             {"text": "", "fill": C["WHITE"]},
+             {"text": "", "fill": C["WHITE"]},
+             {"text": "", "fill": C["WHITE"]}]
+            for w in map_words
+        ]
+        rh = [0.5] + [0.57] * len(rows)
+        table(s, [hdr] + rows,
+              0.35, CONT_Y + 0.1, 9.3, CONT_H - 0.15,
+              [2.0, 2.5, 2.9, 1.9], rh)
+
+    def slide_y3_word_maps_answers():
+        """Y3 Word Maps answers."""
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Whole Group", "Word Maps", "Answers", f"{CODE}.12")
+        map_words = lesson["wordMaps"]["words"]
+        syllables = lesson["wordMaps"]["syllables"]
+        hdr = [
+            {"text": "Words",           "bold": True, "fill": C["WHITE"], "align": "center"},
+            {"text": "Syllable Breaks", "bold": True, "fill": C["WHITE"], "align": "center"},
+            {"text": "Sound Buttons",   "bold": True, "fill": C["WHITE"], "align": "center"},
+            {"text": "My Word",         "bold": True, "fill": C["WHITE"], "align": "center"},
+        ]
+        rows = [
+            [{"text": w,                   "fill": C["WHITE"], "align": "center", "size": 18},
+             {"text": syllables.get(w, w), "fill": C["WHITE"], "align": "center", "size": 16},
+             {"text": "",                  "fill": C["WHITE"]},
+             {"text": w,                   "fill": C["WHITE"], "align": "center", "size": 18, "color": C["PINK"]}]
+            for w in map_words
+        ]
+        rh = [0.5] + [0.57] * len(rows)
+        table(s, [hdr] + rows,
+              0.35, CONT_Y + 0.1, 9.3, CONT_H - 0.15,
+              [2.0, 2.5, 2.9, 1.9], rh)
+
+        TABLE_X  = 0.35
+        SB_COL_X = TABLE_X + 2.0 + 2.5
+        SB_COL_W = 2.9
+        HDR_H_IN = 0.5
+        ROW_H_IN = 0.57
+        SB_FS    = 13
+        for ri, w in enumerate(map_words):
+            cell_top_y = CONT_Y + 0.1 + HDR_H_IN + ri * ROW_H_IN
+            cell_cx    = SB_COL_X + SB_COL_W / 2
+            row_h_sb   = SB_FS * 1.4 / 72
+            dot_h      = max(0.040, SB_FS * 0.084 / 28)
+            total_sb_h = row_h_sb + 0.04 + dot_h
+            word_top_y = cell_top_y + (ROW_H_IN - total_sb_h) / 2
+            draw_sound_buttons(s, w, cell_cx, word_top_y, SB_FS)
+
+    def slide_y3_word_match_blank():
+        """Y3 Word Match — write the word that matches the description (blank)."""
+        word_match = lesson.get("wordMatch", [])[:6]
+
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Independent", "Word Match",
+                  "Write the word that matches each description.", f"{CODE}.13")
+
+        if not word_match:
+            return
+
+        n = len(word_match)
+        row_h = (CONT_H - 0.15) / n
+        for i, item in enumerate(word_match):
+            y = CONT_Y + 0.08 + i * row_h
+            desc = item.get("description", "")
+            rect(s, 0.35, y + 0.04, 6.8, row_h - 0.08, C["WHITE"], "CCCCCC", 0.6)
+            txt(s, desc, 0.5, y + 0.06, 6.6, row_h - 0.12,
+                size=13, color=C["BLACK"], align="left", valign="middle")
+            # Write-in box on right
+            rect(s, 7.3, y + 0.12, 2.4, row_h - 0.24, "F9F9F9", C["GREY"], 0.8)
+            txt(s, "____________", 7.35, y + 0.14, 2.3, row_h - 0.28,
+                size=13, color="BBBBBB", align="center", valign="middle")
+
+    def slide_y3_word_match_answers():
+        """Y3 Word Match answers."""
+        word_match = lesson.get("wordMatch", [])[:6]
+
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Whole Group", "Word Match", "Answers", f"{CODE}.14")
+
+        if not word_match:
+            return
+
+        n = len(word_match)
+        row_h = (CONT_H - 0.15) / n
+        click_shapes = []
+        for i, item in enumerate(word_match):
+            y = CONT_Y + 0.08 + i * row_h
+            desc = item.get("description", "")
+            word = item.get("word", "")
+            rect(s, 0.35, y + 0.04, 6.8, row_h - 0.08, C["WHITE"], "CCCCCC", 0.6)
+            txt(s, desc, 0.5, y + 0.06, 6.6, row_h - 0.12,
+                size=13, color=C["BLACK"], align="left", valign="middle")
+            ans_shape = txt(s, word, 7.3, y + 0.10, 2.4, row_h - 0.20,
+                size=18, bold=True, color=C["PINK"], align="center", valign="middle")
+            click_shapes.append(ans_shape)
+
+        register_clicks(s, click_shapes)
+
+    def slide_y3_spell_check_sentences_blank():
+        """Y3 Spell Check and Sentences combined (blank)."""
+        spell_data = lesson.get("spellData", [])
+
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Independent", "Spell Check and Sentences",
+                  "Put a ✓ if spelled correctly and a ✗ if not. Correct the mistakes. Then write sentences.",
+                  f"{CODE}.15")
+
+        n_words = min(len(spell_data), 10)
+        top_h = CONT_H * 0.62
+        row_h = top_h / max(n_words, 1)
+
+        hdr = [
+            {"text": "Word",            "bold": True, "fill": C["WHITE"], "align": "center", "size": 12},
+            {"text": "✓ or ✗",         "bold": True, "fill": C["WHITE"], "align": "center", "size": 12},
+            {"text": "Correct spelling","bold": True, "fill": C["WHITE"], "align": "center", "size": 12},
+        ]
+        rows = []
+        for i, row in enumerate(spell_data[:n_words]):
+            opts = row.get("opts", [])
+            correct_idx = row.get("correct", 0)
+            correct_word = opts[correct_idx] if correct_idx < len(opts) else ""
+            # Randomly show either correct or one of the incorrect spellings
+            wrong_opts = [o for j, o in enumerate(opts) if j != correct_idx]
+            display_word = correct_word if i % 2 == 0 else (wrong_opts[0] if wrong_opts else correct_word)
+            rows.append([
+                {"text": display_word, "fill": C["WHITE"], "align": "center", "size": 13},
+                {"text": "",           "fill": C["WHITE"], "align": "center"},
+                {"text": "",           "fill": C["WHITE"]},
+            ])
+
+        rh_list = [min(0.38, row_h)] * (n_words + 1)
+        table(s, [hdr] + rows,
+              0.35, CONT_Y + 0.05, 9.3, top_h,
+              [4.0, 1.5, 3.8], rh_list)
+
+        # Sentence prompts below
+        sent_y = CONT_Y + top_h + 0.10
+        sent_h = CONT_H - top_h - 0.15
+        txt(s, f"Write the word '{WORDS[0]}' in a sentence.",
+            0.5, sent_y, 9.0, sent_h * 0.45,
+            size=13, color=C["BLACK"], align="left", valign="top")
+        txt(s, "Choose one or more other words to write in a sentence.",
+            0.5, sent_y + sent_h * 0.48, 9.0, sent_h * 0.45,
+            size=13, color=C["BLACK"], align="left", valign="top")
+
+    def slide_y3_spell_check_sentences_answers():
+        """Y3 Spell Check and Sentences answers."""
+        spell_data = lesson.get("spellData", [])
+
+        s = prs.slides.add_slide(BLANK)
+        add_frame(s, "Whole Group", "Spell Check and Sentences", "Answers", f"{CODE}.16")
+
+        n_words = min(len(spell_data), 10)
+        top_h = CONT_H * 0.62
+        row_h = top_h / max(n_words, 1)
+
+        hdr = [
+            {"text": "Word",            "bold": True, "fill": C["WHITE"], "align": "center", "size": 12},
+            {"text": "✓ or ✗",         "bold": True, "fill": C["WHITE"], "align": "center", "size": 12},
+            {"text": "Correct spelling","bold": True, "fill": C["WHITE"], "align": "center", "size": 12},
+        ]
+        rows = []
+        for i, row in enumerate(spell_data[:n_words]):
+            opts = row.get("opts", [])
+            correct_idx = row.get("correct", 0)
+            correct_word = opts[correct_idx] if correct_idx < len(opts) else ""
+            wrong_opts = [o for j, o in enumerate(opts) if j != correct_idx]
+            display_word = correct_word if i % 2 == 0 else (wrong_opts[0] if wrong_opts else correct_word)
+            is_shown_correct = (display_word == correct_word)
+            rows.append([
+                {"text": display_word,  "fill": C["WHITE"], "align": "center", "size": 13},
+                {"text": "✓" if is_shown_correct else "✗",
+                 "fill": C["WHITE"], "align": "center", "size": 16,
+                 "bold": True,
+                 "color": C["GREEN_S"] if is_shown_correct else C["RED"]},
+                {"text": "" if is_shown_correct else correct_word,
+                 "fill": C["WHITE"], "align": "center", "size": 13,
+                 "bold": True, "color": C["PINK"]},
+            ])
+
+        rh_list = [min(0.38, row_h)] * (n_words + 1)
+        table(s, [hdr] + rows,
+              0.35, CONT_Y + 0.05, 9.3, top_h,
+              [4.0, 1.5, 3.8], rh_list)
+
+        # Sample sentence answer
+        sent_y = CONT_Y + top_h + 0.10
+        sent_h = CONT_H - top_h - 0.15
+        sample = SENTENCES.get(WORDS[0], "")
+        txt(s, f"e.g. '{sample}'",
+            0.5, sent_y, 9.0, sent_h,
+            size=13, italic=True, color=C["PINK"], align="left", valign="middle")
+
+    # ════════════════════════════════════════════════════════════════════════
+    # BUILD SEQUENCE — branches on year group
+    # ════════════════════════════════════════════════════════════════════════
+
+    if YEAR_GROUP == "Y2":
+        slide1()
+        slide_key_spelling()
+        slide_y2_starter()
+        slide4()                          # This Week's Words (shared)
+        slide_y2_spelling_pattern()
+        if lesson.get("y2IncludeMorphMatrix"):
+            slide_y2_morph_matrix_blank()
+            slide_y2_morph_matrix_answers()
+        slide_y2_word_sort_blank()
+        slide_y2_word_sort_answers()
+        slide_y2_sound_it_squash_it()
+        slide_y2_phoneme_maps_blank()
+        slide_y2_phoneme_maps_answers()
+        slide_y2_sentences_synonyms_blank()
+        slide_y2_words_in_action_blank()
+        slide_y2_sentences_synonyms_answers()
+        slide_y2_words_in_action_answers()
+        slide_y2_word_spotter()
+        slide_y2_continuous_provision()
+
+    elif YEAR_GROUP == "Y3":
+        slide1()
+        slide_key_spelling()
+        slide_y3_starter_blank()
+        slide_y3_starter_answers()
+        slide_y3_this_weeks_words()
+        slide_y3_spelling_pattern()
+        slide_y3_etymology_simple()
+        slide_y3_morph_matrix_blank()
+        slide_y3_morph_matrix_answers()
+        slide_y3_word_sort_blank()
+        slide_y3_word_sort_answers()
+        slide_y3_sound_buttons_syllables()
+        slide_y3_word_maps_blank()
+        slide_y3_word_maps_answers()
+        slide_y3_word_match_blank()
+        slide_y3_word_match_answers()
+        slide_y3_spell_check_sentences_blank()
+        slide_y3_spell_check_sentences_answers()
+
+    else:
+        # Y4 / Y5 / Y6 — original sequence
+        slide1();  slide_key_spelling();  slide2();  slide3();  slide4();  slide5();  slide6();  slide7()
+        slide8();  slide9();  slide10(); slide11(); slide12(); slide13(); slide14()
+        slide15(); slide16(); slide17(); slide18(); slide19(); slide20(); slide21()
+
     inject_click_animations()
 
     buf = io.BytesIO()
@@ -1301,8 +2208,6 @@ def build_slides(lesson: dict) -> bytes:
     buf.seek(0)
     pptx_bytes = buf.read()
 
-    # Post-process: if a Key Spelling slide was added, upgrade its timer
-    # thumbnail picture into an embedded video with click-to-play.
     if key_spelling_slide_index[0] is not None and key_spelling_pic_id[0] is not None:
         pptx_bytes = _embed_timer_video(
             pptx_bytes,
@@ -1315,17 +2220,7 @@ def build_slides(lesson: dict) -> bytes:
 
 def _embed_timer_video(pptx_bytes: bytes, slide_index_zero_based: int,
                       pic_shape_id: int) -> bytes:
-    """Inject the 1-minute timer MP4 into a generated PPTX.
-
-    Modifies the saved zip to:
-      * add ppt/media/timer_1min.mp4 as a media part
-      * register the mp4 extension in [Content_Types].xml
-      * add video + media relationships to the target slide
-      * upgrade the existing pic element on the slide to reference the video
-      * insert a p:timing block that plays the video on click and registers
-        an interactive sequence so clicking the video toggles pause/resume.
-    Slide and shape IDs are passed in by the caller.
-    """
+    """Inject the 1-minute timer MP4 into a generated PPTX."""
     import zipfile, io, os
     from lxml import etree
 
@@ -1338,21 +2233,17 @@ def _embed_timer_video(pptx_bytes: bytes, slide_index_zero_based: int,
 
     mp4_path = os.path.join(os.path.dirname(__file__), "assets", "timer_1min.mp4")
     if not os.path.exists(mp4_path):
-        return pptx_bytes  # gracefully degrade if asset missing
+        return pptx_bytes
     with open(mp4_path, "rb") as f:
         mp4_bytes = f.read()
 
-    # python-pptx slides are saved as slide{N}.xml where N is 1-based and follows
-    # presentation.xml's sldIdLst ordering. We received zero-based index from caller.
     slide_one_based = slide_index_zero_based + 1
     slide_xml_path = f"ppt/slides/slide{slide_one_based}.xml"
     slide_rels_path = f"ppt/slides/_rels/slide{slide_one_based}.xml.rels"
 
-    # Read existing zip into memory
     src_zip = zipfile.ZipFile(io.BytesIO(pptx_bytes), "r")
     namelist = src_zip.namelist()
 
-    # ── 1. Update Content Types: ensure mp4 default exists ───────────────────
     ct_xml = src_zip.read("[Content_Types].xml")
     ct_tree = etree.fromstring(ct_xml)
     has_mp4 = False
@@ -1367,7 +2258,6 @@ def _embed_timer_video(pptx_bytes: bytes, slide_index_zero_based: int,
     new_ct_xml = etree.tostring(ct_tree, xml_declaration=True,
                                 encoding="UTF-8", standalone=True)
 
-    # ── 2. Update slide relationships: add video + media + (image already there) ─
     rels_xml = src_zip.read(slide_rels_path)
     rels_tree = etree.fromstring(rels_xml)
     existing_ids = set()
@@ -1381,8 +2271,8 @@ def _embed_timer_video(pptx_bytes: bytes, slide_index_zero_based: int,
         existing_ids.add(f"rId{i}")
         return f"rId{i}"
 
-    media_rid = next_rid()  # for p14:media
-    video_rid = next_rid()  # for video
+    media_rid = next_rid()
+    video_rid = next_rid()
 
     media_rel = etree.SubElement(rels_tree, f"{{{REL_NS}}}Relationship")
     media_rel.set("Id", media_rid)
@@ -1397,13 +2287,9 @@ def _embed_timer_video(pptx_bytes: bytes, slide_index_zero_based: int,
     new_rels_xml = etree.tostring(rels_tree, xml_declaration=True,
                                   encoding="UTF-8", standalone=True)
 
-    # ── 3. Modify slide XML: upgrade pic and add timing ──────────────────────
     slide_xml = src_zip.read(slide_xml_path)
     slide_tree = etree.fromstring(slide_xml)
 
-    nsmap = {"p": P, "a": A, "r": R, "p14": P14}
-
-    # Find the pic with our shape id
     pic = None
     for p in slide_tree.iter(f"{{{P}}}pic"):
         cNvPr = p.find(f".//{{{P}}}cNvPr")
@@ -1411,22 +2297,15 @@ def _embed_timer_video(pptx_bytes: bytes, slide_index_zero_based: int,
             pic = p
             break
     if pic is None:
-        # Couldn't find pic; return original
         src_zip.close()
         return pptx_bytes
 
-    # Upgrade the pic's nvPicPr block:
-    #   * add hlinkClick action="ppaction://media" on cNvPr
-    #   * insert a:videoFile r:link=videoRid into nvPr
-    #   * insert p:extLst with p14:media r:embed=mediaRid into nvPr
     cNvPr = pic.find(f".//{{{P}}}cNvPr")
     if cNvPr is not None:
-        # Add hlinkClick if not present
         if cNvPr.find(f"{{{A}}}hlinkClick") is None:
             hl = etree.SubElement(cNvPr, f"{{{A}}}hlinkClick")
             hl.set(f"{{{R}}}id", "")
             hl.set("action", "ppaction://media")
-            # hlinkClick should come before extLst per schema; reorder if needed
             ext = cNvPr.find(f"{{{A}}}extLst")
             if ext is not None:
                 cNvPr.remove(hl)
@@ -1434,20 +2313,14 @@ def _embed_timer_video(pptx_bytes: bytes, slide_index_zero_based: int,
 
     nvPr = pic.find(f".//{{{P}}}nvPr")
     if nvPr is not None:
-        # videoFile element
         videoFile = etree.SubElement(nvPr, f"{{{A}}}videoFile")
         videoFile.set(f"{{{R}}}link", video_rid)
-        # extLst with p14:media
         ext_list = etree.SubElement(nvPr, f"{{{P}}}extLst")
         ext = etree.SubElement(ext_list, f"{{{P}}}ext")
         ext.set("uri", "{DAA4B4D4-6D71-4841-9C94-3DE7FCFB9230}")
         media = etree.SubElement(ext, f"{{{P14}}}media")
         media.set(f"{{{R}}}embed", media_rid)
 
-    # Add or replace timing tree on this slide. The Key Spelling slide has no
-    # other animations, so we replace any existing timing wholesale.
-    cSld = slide_tree.find(f"{{{P}}}cSld")
-    # Strip existing timing/bldLst
     for tag in ("timing", "bldLst"):
         existing = slide_tree.find(f"{{{P}}}{tag}")
         if existing is not None:
@@ -1457,63 +2330,48 @@ def _embed_timer_video(pptx_bytes: bytes, slide_index_zero_based: int,
     tnLst = etree.SubElement(timing, f"{{{P}}}tnLst")
     root_par = etree.SubElement(tnLst, f"{{{P}}}par")
     root_cTn = etree.SubElement(root_par, f"{{{P}}}cTn")
-    root_cTn.set("id", "1")
-    root_cTn.set("dur", "indefinite")
-    root_cTn.set("restart", "never")
-    root_cTn.set("nodeType", "tmRoot")
+    root_cTn.set("id", "1"); root_cTn.set("dur", "indefinite")
+    root_cTn.set("restart", "never"); root_cTn.set("nodeType", "tmRoot")
     root_children = etree.SubElement(root_cTn, f"{{{P}}}childTnLst")
 
-    # Main click sequence with playFrom command
     seq = etree.SubElement(root_children, f"{{{P}}}seq")
-    seq.set("concurrent", "1")
-    seq.set("nextAc", "seek")
+    seq.set("concurrent", "1"); seq.set("nextAc", "seek")
     seq_cTn = etree.SubElement(seq, f"{{{P}}}cTn")
-    seq_cTn.set("id", "2")
-    seq_cTn.set("dur", "indefinite")
-    seq_cTn.set("nodeType", "mainSeq")
+    seq_cTn.set("id", "2"); seq_cTn.set("dur", "indefinite"); seq_cTn.set("nodeType", "mainSeq")
     seq_children = etree.SubElement(seq_cTn, f"{{{P}}}childTnLst")
 
     click_par = etree.SubElement(seq_children, f"{{{P}}}par")
     click_cTn = etree.SubElement(click_par, f"{{{P}}}cTn")
-    click_cTn.set("id", "3")
-    click_cTn.set("fill", "hold")
+    click_cTn.set("id", "3"); click_cTn.set("fill", "hold")
     cl_stCondLst = etree.SubElement(click_cTn, f"{{{P}}}stCondLst")
     etree.SubElement(cl_stCondLst, f"{{{P}}}cond").set("delay", "indefinite")
     cl_children = etree.SubElement(click_cTn, f"{{{P}}}childTnLst")
 
     inner_par = etree.SubElement(cl_children, f"{{{P}}}par")
     inner_cTn = etree.SubElement(inner_par, f"{{{P}}}cTn")
-    inner_cTn.set("id", "4")
-    inner_cTn.set("fill", "hold")
+    inner_cTn.set("id", "4"); inner_cTn.set("fill", "hold")
     in_stCondLst = etree.SubElement(inner_cTn, f"{{{P}}}stCondLst")
     etree.SubElement(in_stCondLst, f"{{{P}}}cond").set("delay", "0")
     in_children = etree.SubElement(inner_cTn, f"{{{P}}}childTnLst")
 
     play_par = etree.SubElement(in_children, f"{{{P}}}par")
     play_cTn = etree.SubElement(play_par, f"{{{P}}}cTn")
-    play_cTn.set("id", "5")
-    play_cTn.set("presetID", "1")
-    play_cTn.set("presetClass", "mediacall")
-    play_cTn.set("presetSubtype", "0")
-    play_cTn.set("fill", "hold")
-    play_cTn.set("nodeType", "clickEffect")
+    play_cTn.set("id", "5"); play_cTn.set("presetID", "1")
+    play_cTn.set("presetClass", "mediacall"); play_cTn.set("presetSubtype", "0")
+    play_cTn.set("fill", "hold"); play_cTn.set("nodeType", "clickEffect")
     play_stCondLst = etree.SubElement(play_cTn, f"{{{P}}}stCondLst")
     etree.SubElement(play_stCondLst, f"{{{P}}}cond").set("delay", "0")
     play_children = etree.SubElement(play_cTn, f"{{{P}}}childTnLst")
 
     cmd = etree.SubElement(play_children, f"{{{P}}}cmd")
-    cmd.set("type", "call")
-    cmd.set("cmd", "playFrom(0.0)")
+    cmd.set("type", "call"); cmd.set("cmd", "playFrom(0.0)")
     cBhvr = etree.SubElement(cmd, f"{{{P}}}cBhvr")
     cBhvr_cTn = etree.SubElement(cBhvr, f"{{{P}}}cTn")
-    cBhvr_cTn.set("id", "6")
-    cBhvr_cTn.set("dur", "63000")  # ~63s timeline
-    cBhvr_cTn.set("fill", "hold")
+    cBhvr_cTn.set("id", "6"); cBhvr_cTn.set("dur", "63000"); cBhvr_cTn.set("fill", "hold")
     tgtEl = etree.SubElement(cBhvr, f"{{{P}}}tgtEl")
     spTgt = etree.SubElement(tgtEl, f"{{{P}}}spTgt")
     spTgt.set("spid", str(pic_shape_id))
 
-    # prevCondLst / nextCondLst on the seq for slide-level navigation
     prev = etree.SubElement(seq, f"{{{P}}}prevCondLst")
     pc = etree.SubElement(prev, f"{{{P}}}cond")
     pc.set("evt", "onPrev"); pc.set("delay", "0")
@@ -1525,29 +2383,22 @@ def _embed_timer_video(pptx_bytes: bytes, slide_index_zero_based: int,
     nc_tgt = etree.SubElement(nc, f"{{{P}}}tgtEl")
     etree.SubElement(nc_tgt, f"{{{P}}}sldTgt")
 
-    # p:video media node so PPT recognises this as a video player
     video_node = etree.SubElement(root_children, f"{{{P}}}video")
     cMediaNode = etree.SubElement(video_node, f"{{{P}}}cMediaNode")
     cMediaNode.set("vol", "80000")
     media_cTn = etree.SubElement(cMediaNode, f"{{{P}}}cTn")
-    media_cTn.set("id", "7")
-    media_cTn.set("fill", "hold")
-    media_cTn.set("display", "0")
+    media_cTn.set("id", "7"); media_cTn.set("fill", "hold"); media_cTn.set("display", "0")
     m_stCondLst = etree.SubElement(media_cTn, f"{{{P}}}stCondLst")
     etree.SubElement(m_stCondLst, f"{{{P}}}cond").set("delay", "indefinite")
     m_tgtEl = etree.SubElement(cMediaNode, f"{{{P}}}tgtEl")
     m_spTgt = etree.SubElement(m_tgtEl, f"{{{P}}}spTgt")
     m_spTgt.set("spid", str(pic_shape_id))
 
-    # interactiveSeq — clicking the video toggles pause
     iseq = etree.SubElement(root_children, f"{{{P}}}seq")
-    iseq.set("concurrent", "1")
-    iseq.set("nextAc", "seek")
+    iseq.set("concurrent", "1"); iseq.set("nextAc", "seek")
     iseq_cTn = etree.SubElement(iseq, f"{{{P}}}cTn")
-    iseq_cTn.set("id", "8")
-    iseq_cTn.set("restart", "whenNotActive")
-    iseq_cTn.set("fill", "hold")
-    iseq_cTn.set("evtFilter", "cancelBubble")
+    iseq_cTn.set("id", "8"); iseq_cTn.set("restart", "whenNotActive")
+    iseq_cTn.set("fill", "hold"); iseq_cTn.set("evtFilter", "cancelBubble")
     iseq_cTn.set("nodeType", "interactiveSeq")
     iseq_stCondLst = etree.SubElement(iseq_cTn, f"{{{P}}}stCondLst")
     iseq_cond = etree.SubElement(iseq_stCondLst, f"{{{P}}}cond")
@@ -1563,40 +2414,32 @@ def _embed_timer_video(pptx_bytes: bytes, slide_index_zero_based: int,
 
     toggle_par = etree.SubElement(iseq_children, f"{{{P}}}par")
     toggle_cTn = etree.SubElement(toggle_par, f"{{{P}}}cTn")
-    toggle_cTn.set("id", "9")
-    toggle_cTn.set("fill", "hold")
+    toggle_cTn.set("id", "9"); toggle_cTn.set("fill", "hold")
     t_stCondLst = etree.SubElement(toggle_cTn, f"{{{P}}}stCondLst")
     etree.SubElement(t_stCondLst, f"{{{P}}}cond").set("delay", "0")
     t_children = etree.SubElement(toggle_cTn, f"{{{P}}}childTnLst")
 
     t_inner_par = etree.SubElement(t_children, f"{{{P}}}par")
     t_inner_cTn = etree.SubElement(t_inner_par, f"{{{P}}}cTn")
-    t_inner_cTn.set("id", "10")
-    t_inner_cTn.set("fill", "hold")
+    t_inner_cTn.set("id", "10"); t_inner_cTn.set("fill", "hold")
     ti_stCondLst = etree.SubElement(t_inner_cTn, f"{{{P}}}stCondLst")
     etree.SubElement(ti_stCondLst, f"{{{P}}}cond").set("delay", "0")
     ti_children = etree.SubElement(t_inner_cTn, f"{{{P}}}childTnLst")
 
     pause_par = etree.SubElement(ti_children, f"{{{P}}}par")
     pause_cTn = etree.SubElement(pause_par, f"{{{P}}}cTn")
-    pause_cTn.set("id", "11")
-    pause_cTn.set("presetID", "2")
-    pause_cTn.set("presetClass", "mediacall")
-    pause_cTn.set("presetSubtype", "0")
-    pause_cTn.set("fill", "hold")
-    pause_cTn.set("nodeType", "clickEffect")
+    pause_cTn.set("id", "11"); pause_cTn.set("presetID", "2")
+    pause_cTn.set("presetClass", "mediacall"); pause_cTn.set("presetSubtype", "0")
+    pause_cTn.set("fill", "hold"); pause_cTn.set("nodeType", "clickEffect")
     pause_stCondLst = etree.SubElement(pause_cTn, f"{{{P}}}stCondLst")
     etree.SubElement(pause_stCondLst, f"{{{P}}}cond").set("delay", "0")
     pause_children = etree.SubElement(pause_cTn, f"{{{P}}}childTnLst")
 
     pause_cmd = etree.SubElement(pause_children, f"{{{P}}}cmd")
-    pause_cmd.set("type", "call")
-    pause_cmd.set("cmd", "togglePause")
+    pause_cmd.set("type", "call"); pause_cmd.set("cmd", "togglePause")
     pause_cBhvr = etree.SubElement(pause_cmd, f"{{{P}}}cBhvr")
     pause_cBhvr_cTn = etree.SubElement(pause_cBhvr, f"{{{P}}}cTn")
-    pause_cBhvr_cTn.set("id", "12")
-    pause_cBhvr_cTn.set("dur", "1")
-    pause_cBhvr_cTn.set("fill", "hold")
+    pause_cBhvr_cTn.set("id", "12"); pause_cBhvr_cTn.set("dur", "1"); pause_cBhvr_cTn.set("fill", "hold")
     pause_tgtEl = etree.SubElement(pause_cBhvr, f"{{{P}}}tgtEl")
     pause_spTgt = etree.SubElement(pause_tgtEl, f"{{{P}}}spTgt")
     pause_spTgt.set("spid", str(pic_shape_id))
@@ -1611,7 +2454,6 @@ def _embed_timer_video(pptx_bytes: bytes, slide_index_zero_based: int,
     new_slide_xml = etree.tostring(slide_tree, xml_declaration=True,
                                    encoding="UTF-8", standalone=True)
 
-    # ── 4. Write everything to a new zip ─────────────────────────────────────
     out_buf = io.BytesIO()
     out_zip = zipfile.ZipFile(out_buf, "w", zipfile.ZIP_DEFLATED)
     for name in namelist:
@@ -1623,7 +2465,6 @@ def _embed_timer_video(pptx_bytes: bytes, slide_index_zero_based: int,
             out_zip.writestr(name, new_rels_xml)
         else:
             out_zip.writestr(name, src_zip.read(name))
-    # New media file
     if "ppt/media/timer_1min.mp4" not in namelist:
         out_zip.writestr("ppt/media/timer_1min.mp4", mp4_bytes)
     out_zip.close()

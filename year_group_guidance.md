@@ -2,7 +2,7 @@
 
 This document instructs the AI on how to pitch generated `lesson.json` content for each year group. It is derived from analysis of actual EdShed Spelling Shed materials across Y2–Y6.
 
-The slide layout, JSON schema and activity types are fixed and identical across all year groups. Only the **content** — vocabulary, sentence complexity, definitions, morphology scope, word sort categories, cloze sentences and etymology depth — should vary. Apply these guidelines when generating every field of `lesson.json`.
+The core JSON schema fields are shared across all year groups. For Y4–Y6 the slide layout, schema and activity types are fixed and identical. For Y2 and Y3, additional schema fields are generated alongside the standard ones (`y2Starter`, `spellingPattern`, `sentencesAndSynonyms`, `wordsInAction`, `wordSpotter` and `y2IncludeMorphMatrix` for Y2; `y3Starter`, `spellingPattern` and `wordMatch` for Y3), and the slide deck uses a different structure suited to those year groups. Across all year groups, only the **content** — vocabulary, sentence complexity, definitions, morphology scope, word sort categories, cloze sentences and etymology depth — should vary according to the guidance below. Apply these guidelines when generating every field of `lesson.json`.
 
 ---
 
@@ -23,17 +23,20 @@ A teacher may select a lower year group's rule to teach in a higher year group (
 **Words:** Short, high-frequency, one or two syllables only. Entirely concrete nouns and common verbs. No abstract vocabulary.
 
 **Definitions:** One sentence, maximum. Very simple syntax. Avoid subordinate clauses.
+
 - Good: "A grey bird that lives in towns."
 - Good: "To cover something tightly with paper or fabric."
 - Avoid: "When he, she or it..." format — use plain noun/verb description instead.
 
 **Sentences (cloze):** 6–8 words maximum. Simple subject-verb-object. No complex punctuation. One idea per sentence. The target word must be the most obvious completion.
+
 - Good: "She ___ the parcel carefully."
 - Avoid: "Despite the rain, she had carefully ___ the present before hiding it under the stairs."
 
 **Morphology matrix:** 3–4 suffixes only. Common suffixes: -s, -ed, -ing, -er. One simple prefix if applicable (un-). Show the doubling rule in action where relevant to the week's pattern. No Latin or Greek roots.
 
 **Word sort categories:** Concrete, phonics-based sorting only. Examples from the materials:
+
 - Sort by number of phonemes (3, 4, 5, 6)
 - Sort by number of syllables (1 syllable / 2 syllables)
 - Sort by suffix sound (-ed making /d/ vs /t/)
@@ -50,6 +53,14 @@ A teacher may select a lower year group's rule to teach in a higher year group (
 
 **thisWeeksWordsQ:** Simple noticing question. "What do all our words have in common?" / "Where does the pattern appear in each word?"
 
+**y2Starter clues:** Written clues must use Y2 reading vocabulary — short sentences, concrete descriptions, no abstract language. Each clue describes one of last week's words without naming it.
+
+**sentencesAndSynonyms:** Use common, everyday synonyms that Y2 pupils will know (e.g. "unusual" for "strange", "attack" for "charge"). Keep original sentences short (6–8 words). The replacement word should be one of this week's words.
+
+**wordsInAction:** The picture prompt should describe a simple, familiar scene. Required words must be from this week's list and appropriate for Y2 writing. Sample answer should be 1–2 short sentences.
+
+**wordSpotter distractors:** Use words from a plausible previous lesson's rule or related phoneme pattern. All should be real, correctly-spelt common words.
+
 **Word count:** 10 words is fine for Y2; however a teacher may choose to use 8 if the rule is especially complex.
 
 ---
@@ -61,6 +72,7 @@ A teacher may select a lower year group's rule to teach in a higher year group (
 **Words:** Mostly two syllables, some three. Mix of concrete and abstract nouns. Some less common verbs. Words should be in pupils' reading vocabulary even if not always in their written vocabulary.
 
 **Definitions:** One or two sentences. Can include word class. Simple subordinate clauses acceptable.
+
 - Good: "A living creature or animal."
 - Good: "To catch someone or something and keep them. It can also be used as a noun."
 - Can introduce "It can also mean..." constructions.
@@ -70,6 +82,7 @@ A teacher may select a lower year group's rule to teach in a higher year group (
 **Morphology matrix:** 4–5 suffixes/prefixes. Can include: -tion, -ing, -ed, -er, -ment, -ful, re-, un-, mis-. Where the base word takes spelling changes (drop -e, double consonant), note this. Brief notes on meaning where needed.
 
 **Word sort categories:** Can introduce grammatical sorting if concrete.
+
 - "Words where '-ture' follows a vowel" / "Words where '-ture' follows a consonant"
 - "'-ing' words" / "'-ed' words" / "'-en' words"
 - Syllable counts (1/2/3)
@@ -78,6 +91,7 @@ A teacher may select a lower year group's rule to teach in a higher year group (
 **Word sort box labels:** Can be slightly more technical than Y2. "Noun and verb" / "Verb only" is appropriate. Grammatical terms pupils have been taught (noun, verb, adjective) are fine.
 
 **Etymology:** Include etymology. Two or three click-reveal stages. Focus on one clear root and how it connects to the modern word. Avoid chains of three+ languages. Keep accessible.
+
 - Good: root language → root word meaning → link to today's word → a simple fact
 - Keep body text to one sentence per stage
 
@@ -87,6 +101,12 @@ A teacher may select a lower year group's rule to teach in a higher year group (
 
 **thisWeeksWordsQ:** Pattern noticing. "What do all our words have in common?" / "Can you spot the three different suffixes?"
 
+**y3Starter categories:** Choose categories that reflect a plausible previous lesson. If the current lesson is about -ture words, a previous lesson might have covered -ing/-ed/-en suffixes. Categories must be 2–3 distinct labels and each of the 10 last-week words must fit exactly one category.
+
+**spellingPattern:** The title should match or paraphrase the lesson rule. The body should explain the pattern in 2–3 Y3-appropriate sentences. Include a rule_note about exceptions or related patterns. Examples should show base → result transformation (e.g. "sculpt" → "sculpture").
+
+**wordMatch descriptions:** Concrete and visual — describe what you might see, hear or do in connection with the word. Avoid abstract definitions. 15–20 words maximum per description.
+
 ---
 
 ## Year 4 (ages 8–9, Stage 4) — EXISTING SKILL — REFERENCE ONLY
@@ -94,6 +114,7 @@ A teacher may select a lower year group's rule to teach in a higher year group (
 **This is the baseline the tool was built from.** All schema field formats and content patterns described in `lesson-data-schema.md` are calibrated for Y4. When teaching year is Y4, follow the schema as written without modification.
 
 Key Y4 markers:
+
 - Definitions: "When he, she or it [verb phrase]; also, [noun use if applicable]."
 - Sentences: 10–15 words, one or two complex clauses, varied punctuation
 - Morphology: 4–6 suffixes/prefixes including Latin-origin forms where appropriate
@@ -109,15 +130,18 @@ Key Y4 markers:
 **Words:** Two to four syllables. Mix of abstract and concrete. Technical and subject-specific vocabulary is appropriate (financial, artificial, controversial). Pupils may not know all meanings in advance — that's expected.
 
 **Definitions:** Dictionary-style. Full word class (adjective, noun, verb, adverb). Can include antonyms or usage notes. Two sentences acceptable.
+
 - Good: "Relating to money and financial systems. (adjective)"
 - Good: "Made or produced by humans rather than occurring naturally. (adjective) The opposite of natural."
 
 **Sentences (cloze):** 12–18 words. Complex sentences with subordinate clauses, relative clauses, parenthesis. Varied punctuation including colons, semicolons, brackets. The target word should require genuine understanding of its meaning to complete correctly — not guessable from grammar alone.
+
 - Good: "Despite the rain, the official ceremony went ahead as planned, with hundreds of people lining the streets."
 
 **Morphology matrix:** 5–6 entries. Include prefixes with specific meanings (sub- = under, inter- = between, super- = above). Can explore adverbial forms (-ly). Discuss whether adding certain suffixes changes word class. Note any spelling changes explicitly.
 
 **Word sort categories:** More abstract and grammatical.
+
 - Sort by number of syllables (2/3/4/5)
 - Sort by suffix pattern (-cial after vowel / -tial after consonant)
 - Sort by sound the grapheme makes
@@ -143,15 +167,18 @@ Key Y4 markers:
 **Words:** Two to five syllables. Largely abstract or technical. Pupils are expected to have met most of these in reading even if not secure in spelling. Words may have significant morphological complexity (antisocial, superficial, controversially).
 
 **Definitions:** Full dictionary format. Always include word class. Include usage notes, connotation, or register where relevant. Can explicitly compare to synonyms or near-synonyms to highlight nuance.
+
 - Good: "Relating to or affecting a particular race of people. (adjective) Often used in discussions about equality and discrimination."
 - Good: "Existing at or near the surface; not deep or thorough. (adjective) The opposite of profound. Often used to criticise shallow thinking."
 
 **Sentences (cloze):** 15–25 words. Varied, sophisticated sentence structures. Multiple clauses. Full range of punctuation. Sentences should reflect the register of the word — formal words in formal contexts, not awkwardly placed in simple sentences. Two words from the list may appear in one sentence.
+
 - Good: "It is crucial that everyone attends their facial appointments on time, as the salon is fully booked for the day."
 
 **Morphology matrix:** 6 entries. Explore prefix + root + suffix combinations. Include forms that change word class (social → socialist → socially → antisocial → unsociable). Discuss whether combinations are real words. Note register differences between derivatives (e.g. 'computerise' vs 'computation').
 
 **Word sort categories:** Sophisticated, multi-criteria.
+
 - Sort by phoneme count (6 or fewer / 7 or more)
 - Sort by word class of base form
 - Carroll diagrams with abstract criteria (has a prefix meaning 'against' / does not; has an /oo/ sound / does not)
@@ -172,7 +199,7 @@ Key Y4 markers:
 ## Summary Table
 
 | Feature | Y2 | Y3 | Y4 | Y5 | Y6 |
-|---|---|---|---|---|---|
+| --- | --- | --- | --- | --- | --- |
 | Word syllables | 1–2 | 2–3 | 2–3 | 2–4 | 2–5 |
 | Sentence length | 6–8 words | 8–12 words | 10–15 words | 12–18 words | 15–25 words |
 | Definition style | Plain noun/verb description | Simple, with word class | "When he/she/it..." formula | Dictionary-style with word class | Full dictionary with connotation |
@@ -181,3 +208,5 @@ Key Y4 markers:
 | Etymology | Fun fact only | 2–3 stages, one root | Full 6-stage chain | Full chain, semantic shift | Richest: 3+ languages, cultural depth |
 | Starter type | Picture/definition match | Pattern sort / word ladder | Rule application | Error correction + explanation | Syllable count / analytical sort |
 | Cloze difficulty | Obvious from context | Clear but needs some inference | Requires word knowledge | Requires genuine understanding | Register-sensitive, may use two words |
+| Additional fields | y2Starter, spellingPattern, sentencesAndSynonyms, wordsInAction, wordSpotter | y3Starter, spellingPattern, wordMatch | — | — | — |
+| Slide count | 16–18 | 18 | 22 | 22 | 22 |
