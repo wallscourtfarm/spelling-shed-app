@@ -7,8 +7,8 @@ import streamlit as st
 import json
 import io
 import zipfile
-import base64
-from pathlib import Path
+from wfa_shared.logo import logo_html
+from wfa_shared.streamlit_css import inject_wfa_css
 from content_generator import generate_lesson_json, suggest_words
 from worksheets_builder import build_worksheets
 from slides_builder import build_slides
@@ -19,29 +19,14 @@ st.set_page_config(
     layout="centered"
 )
 
-# ── Logo helper — embeds as base64 so no fullscreen-on-hover behaviour ────────
-def _logo_html() -> str:
-    """Return an <img> data URI for the school logo, or empty string if missing."""
-    for filename, mime in [("wfa_logo.webp", "image/webp"), ("wfa_logo.png", "image/png")]:
-        p = Path("assets") / filename
-        if p.exists():
-            b64 = base64.b64encode(p.read_bytes()).decode()
-            return f'<img src="data:{mime};base64,{b64}" style="width:180px;height:auto;display:block">'
-    return ""
-
-logo = _logo_html()
+inject_wfa_css(buttons=True, inputs=True, download=True)
 
 st.markdown(f"""
-<div style="display:flex;align-items:center;gap:24px;padding-bottom:12px;
-            border-bottom:1px solid #e5e5e5;margin-bottom:16px">
-    {logo}
-    <div>
-        <h1 style="margin:0;padding:0;font-size:1.9rem;line-height:1.2;
-                   font-weight:700;color:#1a1a1a">Spelling Lesson Generator</h1>
-        <p style="margin:4px 0 0 0;padding:0;color:#555;font-size:1rem">
-            Wallscourt Farm Academy
-        </p>
-    </div>
+<div style="border-bottom:1px solid #e5e5e5;margin-bottom:16px;padding-bottom:12px">
+    {logo_html("Spelling Lesson Generator")}
+    <p style="margin:-4px 0 0 0;padding:0;color:#555;font-size:1rem">
+        Wallscourt Farm Academy
+    </p>
 </div>
 """, unsafe_allow_html=True)
 
